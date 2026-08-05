@@ -15,8 +15,6 @@ import {
 } from "./nav.js";
 import { createViewCube, enableViewCubePicking } from "./viewcube.js";
 import {
-  buildIsoLegend,
-  buildIsoSurfaces,
   createColorbar,
   createContourView,
   createSliceView,
@@ -275,13 +273,8 @@ canvas.addEventListener("dblclick", (event) => {
 
 // --- optional potential payload ------------------------------------------
 //
-// The potential export is opt-in, so a missing payload disables its two layer
-// buttons rather than breaking the page.
-const isoGroup = new THREE.Group();
-isoGroup.name = "isoGroup";
-isoGroup.visible = false;
-sceneRoot.add(isoGroup);
-
+// The potential export is opt-in, so a missing payload disables its layer
+// button rather than breaking the page.
 const potentialControls = document.getElementById("potential-controls");
 const voltReadout = document.getElementById("volt-readout");
 let sliceView = null;
@@ -328,12 +321,6 @@ function disposePotential() {
       child.material?.dispose();
     });
   }
-  for (const mesh of [...isoGroup.children]) {
-    mesh.geometry.dispose();
-    mesh.material.dispose();
-    isoGroup.remove(mesh);
-  }
-  document.getElementById("iso-levels").replaceChildren();
   document.getElementById("contour-levels").replaceChildren();
   document.getElementById("contour-legend").replaceChildren();
   sliceView = null;
@@ -341,7 +328,7 @@ function disposePotential() {
   contourView = null;
 }
 
-/** Build the slice, colorbar, isosurfaces and contours for one field. */
+/** Build the slice, colorbar and contours for one field. */
 function buildPotential(meta, volume) {
   potentialMeta = meta;
   potentialVolume = volume;
@@ -354,13 +341,6 @@ function buildPotential(meta, volume) {
   // extentMm is already the new field's domain here (selectField refreshes it
   // before loading the potential), so a cropped payload is caught on switch too.
   renderPayloadInfo(meta, extentMm);
-  const isoMeshes = buildIsoSurfaces(
-    meta,
-    isoGroup,
-    document.getElementById("iso-levels"),
-  );
-  buildIsoLegend(isoMeshes);
-
   // Honour whatever the layer buttons currently say, then let the display mode
   // decide between image, contours, or both.
   sliceView.mesh.visible = pressed("layer-slice");
@@ -422,9 +402,7 @@ async function selectField(field) {
       `potential layers unavailable for ${field} (${error.message}); ` +
         "run: python -m pochoir_viewer export-potential",
     );
-    for (const id of ["layer-slice", "layer-iso"]) {
-      disable(id, "run: python -m pochoir_viewer export-potential");
-    }
+    disable("layer-slice", "run: python -m pochoir_viewer export-potential");
   }
 
   currentField = field;
@@ -475,7 +453,6 @@ wireLayer("layer-slice", (on) => {
   if (sliceView) sliceView.mesh.visible = on;
   potentialControls.hidden = !on;
 });
-wireLayer("layer-iso", (on) => { isoGroup.visible = on; });
 
 enableKeyboardShortcuts({
   axisView: (dir) => cubePick.goTo(dir),
