@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "pochoir_viewer",
+  "project_id": "da4777df-e91f-4f5b-a7b7-2bab78411510"
+}

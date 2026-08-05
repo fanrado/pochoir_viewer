@@ -1,0 +1,4 @@
+repos:
+  primary: "."
+  additional:
+    - "/home/rrazakami/work/ND-LAr/FieldResponse/pochoir_viewer/.beads-planning"
