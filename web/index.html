@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pochoir viewer</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; font: 13px/1.5 system-ui, sans-serif; }
+  #view { display: block; width: 100vw; height: 100vh; }
+
+  #panel {
+    position: fixed; top: 12px; left: 12px; width: 220px; padding: 12px;
+    background: rgba(255, 255, 255, 0.92); border-radius: 6px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  }
+  #panel label { display: block; margin-top: 10px; }
+  #panel input[type=range] { width: 100%; }
+  #panel button { margin-top: 8px; width: 100%; }
+  #groups label { margin-top: 4px; }
+
+  #scale-note { color: #555; }
+
+  #readout {
+    position: fixed; bottom: 12px; left: 12px; padding: 8px 10px; min-height: 1em;
+    background: rgba(255, 255, 255, 0.92); border-radius: 6px; white-space: pre;
+  }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.169.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.169.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+
+<canvas id="view"></canvas>
+
+<div id="panel">
+  <div id="groups"></div>
+
+  <label for="npaths">paths shown</label>
+  <input type="range" id="npaths" min="1" max="100" value="100">
+
+  <label for="zscale">z compression</label>
+  <input type="range" id="zscale" min="1" max="40" step="1" value="10">
+  <span id="scale-note"></span>
+
+  <button id="reset-scale">x1 (true scale)</button>
+  <button id="reset-view">reset view</button>
+</div>
+
+<div id="readout"></div>
+
+<script type="module" src="viewer.js"></script>
+
+</body>
+</html>
