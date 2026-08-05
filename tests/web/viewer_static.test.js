@@ -13,7 +13,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync, mkdtempSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync, mkdtempSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -86,29 +86,49 @@ test("every getElementById in viewer.js has a matching id in index.html", () => 
  * cannot see. Each pattern must be listed here with the ids it expands to, and
  * an unlisted pattern is a failure rather than a silent skip -- that silence is
  * exactly the blind spot this registry exists to close.
+ *
+ * Scanned across ALL of web/, not just viewer.js. The first version covered
+ * viewer.js only, on the reasoning that it is the module no behavioural test can
+ * reach. That leaves a residual hole: an importable module could gain a dynamic
+ * id and, if nobody happened to write a behavioural test for it, nothing would
+ * catch a mismatch. Scanning everything costs one registry entry.
  */
 const DYNAMIC_IDS = {
   "field-${field}": ["field-drift", "field-weight"], // the CLI --field choices
+  "mode-${mode}": ["mode-image", "mode-contours", "mode-both"], // SLICE_MODES
 };
+
+/** Every web module, including the browser-only entry point. */
+function allModules() {
+  return readdirSync(WEB_DIR).filter((f) => f.endsWith(".js")).sort();
+}
 
 test("dynamically-built getElementById ids are registered and present", () => {
   const html = readFileSync(join(WEB_DIR, "index.html"), "utf8");
-  // Template-literal lookups: getElementById(`...`)
-  const patterns = [...source().matchAll(/getElementById\(`([^`]+)`\)/g)].map((m) => m[1]);
+
+  // Template-literal lookups: getElementById(`...`), anywhere under web/.
+  const found = new Map(); // pattern -> file that uses it
+  for (const file of allModules()) {
+    const text = readFileSync(join(WEB_DIR, file), "utf8");
+    for (const m of text.matchAll(/getElementById\(`([^`]+)`\)/g)) {
+      found.set(m[1], file);
+    }
+  }
+  const patterns = [...found.keys()];
 
   const unregistered = patterns.filter((p) => !(p in DYNAMIC_IDS));
   assert.deepEqual(
     unregistered,
     [],
-    `viewer.js builds these ids dynamically and they are not in DYNAMIC_IDS: ` +
-      `${unregistered.join(", ")}. Add them with the ids they expand to, or the ` +
-      `literal check silently ignores them.`,
+    `these ids are built dynamically and are not in DYNAMIC_IDS: ` +
+      unregistered.map((p) => `${p} (${found.get(p)})`).join(", ") +
+      `. Add them with the ids they expand to, or the literal check ignores them.`,
   );
 
   // Registry entries must correspond to real code, so a stale one cannot linger
   // and give the impression of coverage.
   const stale = Object.keys(DYNAMIC_IDS).filter((p) => !patterns.includes(p));
-  assert.deepEqual(stale, [], `DYNAMIC_IDS lists patterns viewer.js no longer uses: ${stale}`);
+  assert.deepEqual(stale, [], `DYNAMIC_IDS lists patterns no web module uses: ${stale}`);
 
   const missing = patterns
     .flatMap((p) => DYNAMIC_IDS[p])
@@ -116,7 +136,7 @@ test("dynamically-built getElementById ids are registered and present", () => {
   assert.deepEqual(
     missing,
     [],
-    `viewer.js builds ids absent from index.html: ${missing.join(", ")}. ` +
+    `web/ builds ids absent from index.html: ${missing.join(", ")}. ` +
       `These would be null at runtime.`,
   );
 });
