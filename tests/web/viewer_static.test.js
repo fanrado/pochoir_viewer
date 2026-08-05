@@ -80,3 +80,43 @@ test("every getElementById in viewer.js has a matching id in index.html", () => 
       `These would be null at runtime.`,
   );
 });
+
+/**
+ * Ids built with a template literal, which the literal-string check above
+ * cannot see. Each pattern must be listed here with the ids it expands to, and
+ * an unlisted pattern is a failure rather than a silent skip -- that silence is
+ * exactly the blind spot this registry exists to close.
+ */
+const DYNAMIC_IDS = {
+  "field-${field}": ["field-drift", "field-weight"], // the CLI --field choices
+};
+
+test("dynamically-built getElementById ids are registered and present", () => {
+  const html = readFileSync(join(WEB_DIR, "index.html"), "utf8");
+  // Template-literal lookups: getElementById(`...`)
+  const patterns = [...source().matchAll(/getElementById\(`([^`]+)`\)/g)].map((m) => m[1]);
+
+  const unregistered = patterns.filter((p) => !(p in DYNAMIC_IDS));
+  assert.deepEqual(
+    unregistered,
+    [],
+    `viewer.js builds these ids dynamically and they are not in DYNAMIC_IDS: ` +
+      `${unregistered.join(", ")}. Add them with the ids they expand to, or the ` +
+      `literal check silently ignores them.`,
+  );
+
+  // Registry entries must correspond to real code, so a stale one cannot linger
+  // and give the impression of coverage.
+  const stale = Object.keys(DYNAMIC_IDS).filter((p) => !patterns.includes(p));
+  assert.deepEqual(stale, [], `DYNAMIC_IDS lists patterns viewer.js no longer uses: ${stale}`);
+
+  const missing = patterns
+    .flatMap((p) => DYNAMIC_IDS[p])
+    .filter((id) => !html.includes(`id="${id}"`));
+  assert.deepEqual(
+    missing,
+    [],
+    `viewer.js builds ids absent from index.html: ${missing.join(", ")}. ` +
+      `These would be null at runtime.`,
+  );
+});
