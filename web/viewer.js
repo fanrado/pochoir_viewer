@@ -6,7 +6,12 @@ import {
   offsetOfPath as offsetOfPathIn,
   pathOfVertex as pathOfVertexIn,
 } from "./scene_build.js";
-import { createPivot, recenterOn, updatePivot } from "./nav.js";
+import {
+  createPivot,
+  recenterOn,
+  updatePivot,
+  updatePivotReadout,
+} from "./nav.js";
 
 const scene_data = await (await fetch("data/scene.json")).json();
 console.log(scene_data.meta);
@@ -146,11 +151,21 @@ document.getElementById("reset-scale").addEventListener("click", () => {
 
 document.getElementById("reset-view").addEventListener("click", frameView);
 
+/** Center of the domain as displayed, i.e. in compressed scene space. */
+function domainCenter() {
+  return new THREE.Vector3(...displayedExtent().map((v) => v / 2));
+}
+
+document.getElementById("center-domain").addEventListener("click", () => {
+  recenterOn(domainCenter(), camera, controls);
+});
+
 applyScale();
 frameView();
 
 // Draw the orbit pivot, so the center of rotation is never a mystery.
 const pivot = createPivot(scene);
+const pivotReadout = document.getElementById("pivot-readout");
 
 // Hover a trajectory to identify it, so the bundle is inspectable rather than
 // decorative.
@@ -208,6 +223,7 @@ function animate() {
   requestAnimationFrame(animate);
   controls.update();
   updatePivot(pivot, camera, controls);
+  updatePivotReadout(pivotReadout, controls, sceneRoot);
   renderer.render(scene, camera);
 }
 animate();

@@ -26,6 +26,21 @@ export function createPivot(scene) {
   return pivot;
 }
 
+/**
+ * Report the pivot position in TRUE mm.
+ *
+ * controls.target lives in compressed scene space, so z is divided back out by
+ * sceneRoot.scale.z; x and y are unscaled. Without this the cathode would read
+ * 16.0 mm at z x10 instead of 160.1 mm.
+ */
+export function updatePivotReadout(element, controls, sceneRoot) {
+  const { x, y, z } = controls.target;
+  const trueZ = z / sceneRoot.scale.z;
+  element.textContent =
+    `pivot (${x.toFixed(2)}, ${y.toFixed(2)}, ${trueZ.toFixed(2)}) mm` +
+    ` - double-click geometry to move it`;
+}
+
 const easeOut = (t) => 1 - (1 - t) ** 3;
 
 /**
