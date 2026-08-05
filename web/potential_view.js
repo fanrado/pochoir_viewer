@@ -245,16 +245,108 @@ export function wireSliceControls(view, doc = globalThis.document, onRender = nu
 }
 
 /**
- * Build one translucent mesh per equipotential level, plus its checkbox.
+ * Bright, saturated hues for the isosurface shells, innermost level first.
  *
- * Surface colours come from the shared ramp, so a sheet's colour matches its
- * position on the colorbar. Skipped levels are stated rather than dropped
- * silently.
+ * DELIBERATE REVERSAL of Step 8.13, which tied shell colour to the colorbar
+ * ramp: low weighting values sit at the dark end of that ramp, which made every
+ * outer shell muddy and the shells indistinguishable. The colorbar still
+ * governs THE SLICE IMAGE; only these shells use the fixed palette, and the
+ * per-level swatches keep the mapping legible.
+ *
+ * Indexed by level order. If more levels are requested than there are hues the
+ * palette wraps, so two shells can repeat a colour rather than one going black.
  */
-export function buildIsoSurfaces(meta, group, panel, doc = globalThis.document) {
-  const meshes = [];
+export const ISO_PALETTE = [
+  0xff40d0, // magenta  — innermost / highest level
+  0xff9020, // orange
+  0xffe020, // yellow
+  0x40e040, // green
+  0x30e0e0, // cyan
+  0x4070ff, // blue
+  0xa050ff, // violet   — outermost / lowest level
+];
 
-  for (const surface of meta.isosurfaces ?? []) {
+/** Opacity at and above which a shell is drawn as a solid, depth-writing mesh. */
+const OPAQUE_AT = 0.98;
+
+/**
+ * The shells the opacity slider currently drives.
+ *
+ * Held at module scope, and the slider handler is attached once, so a field
+ * switch that rebuilds every mesh does not leave the slider updating discarded
+ * materials or stack a second handler on the element.
+ */
+let activeIsoMeshes = [];
+let isoOpacityWired = false;
+
+function wireIsoOpacity(meshes, doc, fallback) {
+  activeIsoMeshes = meshes;
+
+  const slider = doc.getElementById("iso-opacity");
+  const label = doc.getElementById("iso-opacity-label");
+
+  const apply = (value) => {
+    for (const mesh of activeIsoMeshes) applyIsoOpacity(mesh.material, value);
+    if (label) label.textContent = `opacity ${Math.round(value * 100)}%`;
+  };
+
+  if (!slider) {
+    apply(fallback);
+    return;
+  }
+  if (!isoOpacityWired) {
+    slider.addEventListener("input", () => apply(Number(slider.value)));
+    isoOpacityWired = true;
+  }
+  apply(Number(slider.value)); // adopt the live value, not the default
+}
+
+/**
+ * Apply `opacity` to a shell material, flipping blend flags at the top end.
+ *
+ * A fully opaque mesh left in transparent blending mode sorts wrongly and shows
+ * artefacts, so at the top of the slider it becomes a genuine solid.
+ */
+export function applyIsoOpacity(material, opacity) {
+  material.opacity = opacity;
+  const solid = opacity >= OPAQUE_AT;
+  material.transparent = !solid;
+  material.depthWrite = solid;
+  material.needsUpdate = true;
+}
+
+/**
+ * Build one mesh per equipotential level, plus its checkbox.
+ *
+ * Shells are ordered back to front via renderOrder — outermost first — because
+ * several of them interleave with the pad plane at 10.0 mm and the grid plane at
+ * 13.1 mm, and unordered transparent draws blend incorrectly there.
+ *
+ * Skipped levels are stated rather than dropped silently.
+ */
+export function buildIsoSurfaces(
+  meta,
+  group,
+  panel,
+  doc = globalThis.document,
+  opacity = 0.35,
+) {
+  const meshes = [];
+  const surfaces = meta.isosurfaces ?? [];
+
+  // Highest level = innermost shell = first palette entry.
+  const byLevelDescending = [...surfaces]
+    .map((s, index) => ({ s, index }))
+    .sort((a, b) => b.s.level - a.s.level);
+  const paletteOf = new Map(
+    byLevelDescending.map(({ index }, rank) => [
+      index,
+      ISO_PALETTE[rank % ISO_PALETTE.length],
+    ]),
+  );
+  const rankOf = new Map(byLevelDescending.map(({ index }, rank) => [index, rank]));
+
+  for (const [index, surface] of surfaces.entries()) {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute(
       "position",
@@ -263,17 +355,17 @@ export function buildIsoSurfaces(meta, group, panel, doc = globalThis.document) 
     geometry.setIndex(surface.indices);
     geometry.computeVertexNormals();
 
-    const [r, g, b] = rampRGB(rampPosition(surface.level, meta.vmin, meta.vmax));
-    const mesh = new THREE.Mesh(
-      geometry,
-      new THREE.MeshLambertMaterial({
-        color: new THREE.Color(`rgb(${r},${g},${b})`),
-        transparent: true,
-        opacity: 0.3,
-        side: THREE.DoubleSide,
-      }),
-    );
+    const material = new THREE.MeshLambertMaterial({
+      color: new THREE.Color(paletteOf.get(index)),
+      side: THREE.DoubleSide,
+    });
+    applyIsoOpacity(material, opacity);
+
+    const mesh = new THREE.Mesh(geometry, material);
     mesh.name = `iso ${surface.level} V`;
+    // Outermost shell (highest rank) draws first.
+    // Lower renderOrder draws first, so the outermost shell leads.
+    mesh.renderOrder = -rankOf.get(index) || 0;
     group.add(mesh);
     meshes.push(mesh);
 
@@ -286,6 +378,10 @@ export function buildIsoSurfaces(meta, group, panel, doc = globalThis.document) 
     label.append(box, ` ${surface.level} V (${surface.n_tris} tris)`);
     panel.append(label);
   }
+
+  // The slider owns the live value; rebuilt meshes adopt whatever it currently
+  // says, so the user's choice survives slice, axis and field changes.
+  wireIsoOpacity(meshes, doc, opacity);
 
   const skipped = meta.skipped_levels ?? [];
   if (skipped.length > 0 && panel) {
