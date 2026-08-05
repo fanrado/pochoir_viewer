@@ -269,6 +269,7 @@ export function enableViewCubePicking(gizmo, renderer, mainCamera, controls, get
     } catch {
       // capture may already be gone; releasing twice is not an error worth surfacing
     }
+    controls.enabled = drag.controlsWere;
     drag = null;
   }
 
@@ -277,13 +278,18 @@ export function enableViewCubePicking(gizmo, renderer, mainCamera, controls, get
     // Claim the gesture so OrbitControls does not also act on it.
     event.preventDefault();
     event.stopPropagation();
+    // OrbitControls listens on this same element and registered first, so
+    // stopPropagation cannot reach it — mute it for the duration instead,
+    // otherwise a gizmo drag would orbit the camera twice.
     drag = {
       id: event.pointerId,
       x: event.clientX,
       y: event.clientY,
       exceeded: false,
       hit: pick(event),
+      controlsWere: controls.enabled,
     };
+    controls.enabled = false;
     renderer.domElement.setPointerCapture?.(event.pointerId);
   });
 
