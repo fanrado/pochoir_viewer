@@ -12,8 +12,15 @@ import numpy as np
 from .io import find_drift, load_npz
 
 
-#: Equipotential levels drawn by default, in volts.
+#: Equipotential levels drawn by default for the drift field, in volts.
 DEFAULT_LEVELS = (-500.0, -2000.0, -4000.0, -6000.0, -8000.0)
+
+#: Levels for the weighting potential, dimensionless.
+#:
+#: Deliberately log-ish rather than evenly spaced: the weighting potential falls
+#: off fast — 1.0 at the pad, 0.115 at the grid, 0.0025 by z = 150 — so linear
+#: levels would bunch every surface into the first millimetre.
+WEIGHT_LEVELS = (0.9, 0.75, 0.5, 0.25, 0.1, 0.05, 0.01)
 
 
 def load_potential(root: str | Path) -> np.ndarray:
@@ -127,7 +134,9 @@ def isosurfaces(
     arr: np.ndarray,
     grid,
     levels=DEFAULT_LEVELS,
-    zstride: int = 1,
+    stride: tuple[int, int, int] = (1, 1, 1),
+    zmax: int | None = None,
+    zstride: int | None = None,
 ) -> tuple[list[dict], list[float]]:
     """Triangulate equipotential surfaces, returning ``(surfaces, skipped)``.
 
@@ -144,7 +153,10 @@ def isosurfaces(
     """
     from skimage import measure  # lazy: only isosurfaces needs scikit-image
 
-    volume, _, _ = volume_float32(arr, zstride=zstride)
+    volume, _, vmeta = volume_float32(
+        arr, stride=stride, zmax=zmax, zstride=zstride
+    )
+    effective = vmeta["stride"]
     vmin = float(np.min(volume))
     vmax = float(np.max(volume))
     sx, sy, sz = grid.spacing
@@ -161,16 +173,18 @@ def isosurfaces(
 
         verts, faces, _normals, _values = measure.marching_cubes(volume, level=level)
 
-        # Vertices come back in the INDEX SPACE OF THE STRIDED VOLUME, so the
-        # z index must be multiplied by zstride before scaling to mm —
-        # otherwise every surface collapses toward the anode.
+        # Vertices come back in the INDEX SPACE OF THE STRIDED VOLUME, so each
+        # index must be multiplied by its own stride before scaling to mm —
+        # otherwise every surface collapses toward the origin on that axis.
+        # The z crop is a PREFIX slice (arr[..., :zmax]), so it shifts nothing
+        # and contributes no offset here. Do not add one.
         # Origin is added on every axis, matching Grid.index_to_mm and
         # boundary_groups: two index-to-mm conversions that disagree would put
         # the equipotential sheets off the boundary planes in the same scene.
         mm = np.empty_like(verts)
-        mm[:, 0] = ox + verts[:, 0] * sx
-        mm[:, 1] = oy + verts[:, 1] * sy
-        mm[:, 2] = oz + verts[:, 2] * zstride * sz
+        mm[:, 0] = ox + verts[:, 0] * effective[0] * sx
+        mm[:, 1] = oy + verts[:, 1] * effective[1] * sy
+        mm[:, 2] = oz + verts[:, 2] * effective[2] * sz
 
         surfaces.append(
             {
