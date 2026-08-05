@@ -109,8 +109,11 @@ def _float_list(text: str) -> list[float]:
         ) from None
 
 
-#: Per-field defaults. The weighting potential is 310 MB at full resolution and
-#: numerically negligible past z index 265, so it is strided and cropped.
+#: Per-field defaults. The weighting potential is 310 MB at full resolution, so
+#: it is strided and cropped to be shippable. The crop is lossy: at this z 300
+#: default the largest discarded value is 5.2e-4 out of a 0..1 range and 0.76%
+#: of the total magnitude is dropped. Every run prints both figures; see the
+#: crop table in README.md for other depths.
 _WEIGHT_STRIDE = (2, 2, 1)
 _WEIGHT_ZMAX = 300
 
