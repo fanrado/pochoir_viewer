@@ -84,6 +84,70 @@ scene_data.boundary.forEach((group, index) => {
 
 scene.add(boundaryGroup);
 
+// All 100 paths live in one buffer: 100 Line objects would be 100 draw calls,
+// and one buffer also gives the hover raycast a single target.
+const COLOR_FAR = new THREE.Color(0x2222ff); // at z = extent_mm[2]
+const COLOR_NEAR = new THREE.Color(0xffff22); // at z = 0
+const EXTENT_Z = scene_data.meta.extent_mm[2];
+
+const pathRanges = []; // {start, count} in vertices, indexed by path
+
+let vertexTotal = 0;
+for (const path of scene_data.paths) {
+  const segments = Math.max(path.points.length / 3 - 1, 0);
+  pathRanges.push({ start: vertexTotal, count: segments * 2 });
+  vertexTotal += segments * 2;
+}
+
+const linePositions = new Float32Array(vertexTotal * 3);
+const lineColors = new Float32Array(vertexTotal * 3);
+const scratch = new THREE.Color();
+
+scene_data.paths.forEach((path, p) => {
+  const pts = path.points;
+  let w = pathRanges[p].start * 3;
+
+  for (let i = 0; i + 5 < pts.length; i += 3) {
+    // Emit the consecutive pair (i, i+1) as one segment.
+    for (const base of [i, i + 3]) {
+      linePositions[w] = pts[base];
+      linePositions[w + 1] = pts[base + 1];
+      linePositions[w + 2] = pts[base + 2];
+
+      scratch.copy(COLOR_NEAR).lerp(COLOR_FAR, pts[base + 2] / EXTENT_Z);
+      lineColors[w] = scratch.r;
+      lineColors[w + 1] = scratch.g;
+      lineColors[w + 2] = scratch.b;
+      w += 3;
+    }
+  }
+});
+
+const pathGeometry = new THREE.BufferGeometry();
+pathGeometry.setAttribute("position", new THREE.BufferAttribute(linePositions, 3));
+pathGeometry.setAttribute("color", new THREE.BufferAttribute(lineColors, 3));
+
+const pathLines = new THREE.LineSegments(
+  pathGeometry,
+  new THREE.LineBasicMaterial({ vertexColors: true }),
+);
+pathLines.name = "pathLines";
+scene.add(pathLines);
+
+/** Vertex offset just past path N-1, i.e. the draw count showing N paths. */
+function offsetOfPath(n) {
+  if (n <= 0) return 0;
+  if (n >= pathRanges.length) return vertexTotal;
+  return pathRanges[n - 1].start + pathRanges[n - 1].count;
+}
+
+const npathsInput = document.getElementById("npaths");
+npathsInput.addEventListener("input", () => {
+  // Draw-range only: never rebuild or reallocate the geometry here.
+  pathGeometry.setDrawRange(0, offsetOfPath(Number(npathsInput.value)));
+});
+pathGeometry.setDrawRange(0, offsetOfPath(Number(npathsInput.value)));
+
 window.addEventListener("resize", () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
