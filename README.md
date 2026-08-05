@@ -79,3 +79,48 @@ ten times shallower in reality. The compression factor in force is always
 stated on screen next to the slider, along with both the true and the displayed
 dimensions, and the **x1 (true scale)** button restores the undistorted
 geometry in one click. Any conclusion about path angle should be checked at x1.
+
+## Navigation
+
+The single most important thing to know: **all rotation happens about the
+yellow dot.** That dot is the orbit pivot, and it is drawn precisely because it
+moves — a pivot that has drifted somewhere unexpected is the usual reason
+rotation starts feeling wrong.
+
+| input | effect |
+| --- | --- |
+| left-drag | orbit about the yellow pivot |
+| right-drag (or two-finger drag) | pan — **this moves the pivot** |
+| scroll | zoom |
+| double-click a path or boundary surface | put the pivot on that point |
+
+Right-drag panning is the one action that relocates the pivot. If rotation
+suddenly swings the scene around some far-off point, the pivot has been panned
+away; press <kbd>C</kbd> or click **center on domain** to bring it home, or
+double-click whatever you actually want to inspect to move it there.
+
+The **pivot readout** in the panel always names the pivot's position, and its
+z is reported in **true mm regardless of the z-compression setting** — with
+compression at ×10 the cathode still reads about 160.1 mm, not 16.0.
+
+### View cube
+
+The cube in the top-right corner mirrors the current orientation. Click a face,
+edge, or corner to snap to that canonical view — faces give axis views, edges
+and corners give isometric ones — or drag the cube to orbit. Face labels are
+domain-specific: **+Z cathode** and **-Z anode** tell you which end of the
+drift you are looking at. Clicking a face reframes the geometry for the current
+z-compression, so a +Z view fits the pad plane while a +X view fits the drift
+slab. None of the cube's actions move the pivot.
+
+### Keyboard shortcuts
+
+| key | action |
+| --- | --- |
+| <kbd>1</kbd> … <kbd>6</kbd> | axis views: +X, -X, +Y, -Y, +Z, -Z |
+| <kbd>F</kbd> | move the pivot to the geometry under the cursor |
+| <kbd>C</kbd> | center the pivot on the domain |
+| <kbd>R</kbd> | reset the view |
+
+Shortcuts stand down while a slider or button has focus, so arrow keys still
+adjust the focused control.
