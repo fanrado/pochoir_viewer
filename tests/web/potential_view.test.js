@@ -656,3 +656,96 @@ test("absent isosurfaces are treated as none", () => {
 
   assert.deepEqual(buildIsoSurfaces(bare, new THREE.Group(), null, fakeDoc()), []);
 });
+
+// --- per-field payload names and units --------------------------------------
+
+test("fetchPotential defaults to the drift payload name", async () => {
+  const seen = [];
+  const prior = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    seen.push(String(url));
+    return String(url).endsWith(".json") ? okJson(meta()) : okBytes(indexVolume().buffer);
+  };
+
+  try {
+    await fetchPotential();
+    assert.ok(seen[0].endsWith("data/potential.json"), seen[0]);
+  } finally {
+    globalThis.fetch = prior;
+  }
+});
+
+test("fetchPotential accepts a per-field payload name", async () => {
+  // write_potential names non-drift payloads potential_<field>.json.
+  const seen = [];
+  const prior = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    seen.push(String(url));
+    return String(url).endsWith(".json")
+      ? okJson(meta({ bin: "potential_weight.bin", units: "dimensionless" }))
+      : okBytes(indexVolume().buffer);
+  };
+
+  try {
+    const { meta: got } = await fetchPotential("data", "potential_weight.json");
+    assert.ok(seen[0].endsWith("data/potential_weight.json"), seen[0]);
+    assert.ok(seen[1].endsWith("potential_weight.bin"), seen[1]);
+    assert.equal(got.units, "dimensionless");
+  } finally {
+    globalThis.fetch = prior;
+  }
+});
+
+test("a missing per-field payload names that file in the error", async () => {
+  const stub = stubFetch({});
+  try {
+    await assert.rejects(
+      () => fetchPotential("data", "potential_weight.json"),
+      /potential_weight\.json: HTTP 404/,
+    );
+  } finally {
+    stub.restore();
+  }
+});
+
+test("the colorbar drops the volt unit for a dimensionless field", () => {
+  const doc = fakeDoc({
+    colorbar: fakeCanvas(),
+    "colorbar-max": fakeElement(),
+    "colorbar-min": fakeElement(),
+  });
+
+  createColorbar(meta({ units: "dimensionless", vmin: 0, vmax: 1 }), doc);
+
+  assert.ok(!doc.elements["colorbar-max"].textContent.includes("V"));
+  assert.equal(doc.elements["colorbar-max"].textContent, "1");
+});
+
+test("the colorbar keeps volts when units are absent", () => {
+  // Phase 8 payloads have no units key and were always volts.
+  const doc = fakeDoc({
+    colorbar: fakeCanvas(),
+    "colorbar-max": fakeElement(),
+    "colorbar-min": fakeElement(),
+  });
+  const bare = { ...meta() };
+  delete bare.units;
+
+  createColorbar(bare, doc);
+
+  assert.equal(doc.elements["colorbar-max"].textContent, "0 V");
+  assert.equal(doc.elements["colorbar-min"].textContent, "-8000 V");
+});
+
+test("a dimensionless colorbar does not round its labels to integers", () => {
+  // 0.05 must not print as "0".
+  const doc = fakeDoc({
+    colorbar: fakeCanvas(),
+    "colorbar-max": fakeElement(),
+    "colorbar-min": fakeElement(),
+  });
+
+  createColorbar(meta({ units: "dimensionless", vmin: 0.05, vmax: 0.95 }), doc);
+
+  assert.equal(doc.elements["colorbar-min"].textContent, "0.05");
+});
