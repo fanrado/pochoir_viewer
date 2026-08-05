@@ -240,11 +240,71 @@ export function enableViewCubePicking(gizmo, renderer, mainCamera, controls, get
 
   renderer.domElement.addEventListener("pointerleave", () => setHighlight(-1));
 
+  // A drag on the gizmo orbits the main view; anything under DRAG_PX stays a
+  // click, so the canonical views remain reachable.
+  const DRAG_PX = 4;
+  const RAD_PER_PX = 0.01;
+  const spherical = new THREE.Spherical();
+  const offset = new THREE.Vector3();
+
+  let drag = null;
+
+  function orbitBy(dx, dy) {
+    offset.subVectors(mainCamera.position, controls.target);
+    spherical.setFromVector3(offset);
+    spherical.theta -= dx * RAD_PER_PX;
+    spherical.phi -= dy * RAD_PER_PX;
+    spherical.phi = THREE.MathUtils.clamp(spherical.phi, 0.01, Math.PI - 0.01);
+    mainCamera.position.copy(controls.target).add(offset.setFromSpherical(spherical));
+    mainCamera.lookAt(controls.target);
+    controls.update();
+  }
+
+  function endDrag(event) {
+    if (!drag) return;
+    // Never moved far enough to be a drag, so honour it as a click.
+    if (!drag.exceeded && drag.hit) goTo(drag.hit.userData.dir.clone());
+    try {
+      renderer.domElement.releasePointerCapture?.(drag.id);
+    } catch {
+      // capture may already be gone; releasing twice is not an error worth surfacing
+    }
+    drag = null;
+  }
+
   renderer.domElement.addEventListener("pointerdown", (event) => {
     if (!insideRect(event)) return;
-    const hit = pick(event);
-    if (hit) goTo(hit.userData.dir.clone());
+    // Claim the gesture so OrbitControls does not also act on it.
+    event.preventDefault();
+    event.stopPropagation();
+    drag = {
+      id: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      exceeded: false,
+      hit: pick(event),
+    };
+    renderer.domElement.setPointerCapture?.(event.pointerId);
   });
 
-  return { goTo, insideRect };
+  renderer.domElement.addEventListener("pointermove", (event) => {
+    if (!drag || event.pointerId !== drag.id) return;
+
+    const dx = event.clientX - drag.x;
+    const dy = event.clientY - drag.y;
+    if (!drag.exceeded && Math.hypot(dx, dy) < DRAG_PX) return;
+
+    drag.exceeded = true;
+    orbitBy(dx, dy);
+    drag.x = event.clientX;
+    drag.y = event.clientY;
+  });
+
+  renderer.domElement.addEventListener("pointerup", endDrag);
+  renderer.domElement.addEventListener("pointercancel", endDrag);
+  // Releasing after the pointer has left the window must not strand the drag.
+  window.addEventListener("pointerup", endDrag);
+  window.addEventListener("blur", endDrag);
+
+  return { goTo, insideRect, isDragging: () => Boolean(drag?.exceeded) };
 }
