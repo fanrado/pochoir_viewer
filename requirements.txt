@@ -1,5 +1,2 @@
 # Lower bounds are the versions this was developed and verified against.
 numpy>=1.26.4
-
-# Used for marching-cubes equipotential isosurfaces.
-scikit-image>=0.24.0

@@ -13,7 +13,7 @@ from .grid import Grid
 import numpy as np
 
 from .io import find_drift, find_field
-from .potential import default_levels, load_potential, write_potential
+from .potential import load_potential, write_potential
 
 
 def _add_export_parser(subparsers) -> None:
@@ -42,7 +42,7 @@ def _add_export_parser(subparsers) -> None:
 
 def _add_export_potential_parser(subparsers) -> None:
     p = subparsers.add_parser(
-        "export-potential", help="write the potential volume and isosurfaces"
+        "export-potential", help="write the potential volume"
     )
     p.add_argument("--root", required=True, help="pochoir OUTPUT directory")
     p.add_argument("--dest-dir", required=True, help="directory to write into")
@@ -71,12 +71,6 @@ def _add_export_potential_parser(subparsers) -> None:
         help="shorthand for stride 1,1,N",
     )
     p.add_argument(
-        "--levels",
-        type=_float_list,
-        default=None,
-        help="comma-separated levels; defaults per field",
-    )
-    p.add_argument(
         "--basename",
         default=None,
         help="output stem, overriding the per-field default",
@@ -97,16 +91,6 @@ def _int_list(text: str) -> list[int]:
             f"stride needs three components, got {text!r}"
         )
     return values
-
-
-def _float_list(text: str) -> list[float]:
-    """Parse a comma-separated float list, e.g. ``-500,-2000``."""
-    try:
-        return [float(part) for part in text.split(",") if part.strip()]
-    except ValueError:
-        raise argparse.ArgumentTypeError(
-            f"expected comma-separated numbers, got {text!r}"
-        ) from None
 
 
 #: Per-field defaults for the weighting potential.
@@ -178,7 +162,6 @@ def _export_potential(args) -> int:
         args.root,
         args.dest_dir,
         grid,
-        levels=args.levels,
         stride=stride,
         zmax=zmax,
         zstride=args.zstride,
@@ -197,18 +180,6 @@ def _export_potential(args) -> int:
         f"({meta['bytes'] / 1e6:.1f} MB, shape {meta['shape']}, "
         f"units {meta['units'] or 'dimensionless'})"
     )
-    # Volts get the unit and one decimal; weighting levels are bare ratios.
-    volts = meta["units"] == "V"
-    for surface in meta["isosurfaces"]:
-        level = (
-            f"{surface['level']:9.1f} V" if volts else f"{surface['level']:9.4g}"
-        )
-        print(f"  {level} -> {surface['n_tris']} triangles")
-    if meta["skipped_levels"]:
-        print(
-            f"  skipped (outside {meta['vmin']}..{meta['vmax']}): "
-            f"{meta['skipped_levels']}"
-        )
     return 0
 
 
@@ -232,23 +203,6 @@ def _export(args) -> int:
     return 0
 
 
-def _glue_negative_values(argv: list[str]) -> list[str]:
-    """Rewrite ``--levels -500,-2000`` as ``--levels=-500,-2000``.
-
-    argparse treats any value starting with ``-`` as another option, which
-    would reject the documented form of a negative level list.
-    """
-    glued: list[str] = []
-    argv = list(argv)
-    while argv:
-        token = argv.pop(0)
-        if token == "--levels" and argv and argv[0].startswith("-"):
-            glued.append(f"--levels={argv.pop(0)}")
-        else:
-            glued.append(token)
-    return glued
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="pochoir_viewer")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -259,6 +213,6 @@ def main(argv: list[str] | None = None) -> int:
         import sys
 
         argv = sys.argv[1:]
-    args = parser.parse_args(_glue_negative_values(argv))
+    args = parser.parse_args(argv)
     handlers = {"export": _export, "export-potential": _export_potential}
     return handlers[args.command](args)
