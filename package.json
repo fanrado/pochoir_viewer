@@ -1,0 +1,12 @@
+{
+  "name": "pochoir-viewer-tests",
+  "private": true,
+  "type": "module",
+  "description": "Test-only manifest: three is needed to import web/scene_build.js in node.",
+  "scripts": {
+    "test": "node --test tests/web/"
+  },
+  "devDependencies": {
+    "three": "0.169.0"
+  }
+}
