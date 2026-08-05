@@ -14,6 +14,14 @@ import numpy as np
 #: are solver scratch state rather than results.
 SKIP_DIRS = frozenset({"initial", "domain", "increment", "starts"})
 
+#: Accepted spellings of the drift field array, in precedence order.
+DRIFT_FIELD_NAMES = ("drift3d.npz", "drift.npz")
+
+#: Accepted spellings of the drift endtag array, in precedence order.
+DRIFT_ENDTAG_NAMES = ("drift3d_endtag.npz", "drift_endtag.npz")
+
+_DRIFT_KINDS = {"field": DRIFT_FIELD_NAMES, "endtag": DRIFT_ENDTAG_NAMES}
+
 
 def load_npz(path: str | Path) -> tuple[str, np.ndarray]:
     """Load a single-array .npz and return its ``(key, array)``.
@@ -39,6 +47,39 @@ def list_datasets(root: str | Path) -> list[Path]:
         p
         for p in root.rglob("*.npz")
         if not SKIP_DIRS.intersection(p.relative_to(root).parts)
+    )
+
+
+def find_drift(root: str | Path, subdir: str, kind: str = "field") -> Path:
+    """Resolve the drift array in ``root/subdir``, accepting either spelling.
+
+    pochoir writes ``drift.npz`` under some subdirectories and ``drift3d.npz``
+    under others, with identical contents. Candidates are tried in the order
+    given by :data:`DRIFT_FIELD_NAMES` / :data:`DRIFT_ENDTAG_NAMES`, so if a
+    directory somehow holds both spellings ``drift3d.npz`` wins as the
+    explicitly-3D name. That precedence only guards against ambiguity.
+
+    Names are matched exactly, never globbed: ``drift*.npz`` would wrongly
+    match ``drift_insulator.npz`` in ``initial/`` and ``drift3d_endtag.npz``
+    in ``paths/``.
+    """
+    try:
+        candidates = _DRIFT_KINDS[kind]
+    except KeyError:
+        raise ValueError(
+            f"unknown drift kind {kind!r}, expected one of {sorted(_DRIFT_KINDS)}"
+        ) from None
+
+    directory = Path(root) / subdir
+    for name in candidates:
+        candidate = directory / name
+        if candidate.is_file():
+            return candidate
+
+    present = sorted(p.name for p in directory.glob("*.npz"))
+    raise FileNotFoundError(
+        f"no {kind} drift array in {directory}: tried {list(candidates)}, "
+        f"found {present}"
     )
 
 
