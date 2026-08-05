@@ -12,11 +12,44 @@
     position: fixed; top: 12px; left: 12px; width: 220px; padding: 12px;
     background: rgba(255, 255, 255, 0.92); border-radius: 6px;
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+
+    /* The panel outgrew a short window once Phases 5, 6, 8, 10, 11 and 13 each
+       added controls, so it scrolls instead of running off the bottom.
+
+       It stays on the LEFT rather than reserving top-right clearance: the view
+       cube sits in a 96x96 px box inset 12 px from the canvas top-right, and a
+       left-hand panel cannot cover it whatever the panel width or window size
+       becomes. Reserving 120 px of clearance would instead have to be
+       rechecked every time either box changed. */
+    box-sizing: border-box;
+    max-height: calc(100vh - 24px);
+    overflow-y: auto;
+    /* MANDATORY. Without this, a wheel event that reaches either end of the
+       panel's scroll propagates to the canvas and OrbitControls zooms the
+       scene while the user is only trying to scroll the controls. */
+    overscroll-behavior: contain;
+    /* Hold the width steady as sections appear and disappear, so the layout
+       does not reflow when the scrollbar comes and goes. */
+    scrollbar-gutter: stable;
   }
   #panel label { display: block; margin-top: 10px; }
-  #panel input[type=range] { width: 100%; }
+  /* touch-action: none keeps a drag on the thumb from panning the scroll
+     container instead of moving the slider. Covers #npaths, #zscale,
+     #slice-idx, #iso-opacity, #contour-count and #log-decades alike. */
+  #panel input[type=range] { width: 100%; touch-action: none; }
   #panel button { margin-top: 8px; width: 100%; }
   #groups label { margin-top: 4px; }
+
+  /* Section headings stick to the top of the scrollport while their own
+     section is in view, so the current section is always named. The
+     background must be opaque or scrolled content shows through it. */
+  #panel .sec-head {
+    position: sticky; top: 0; z-index: 1;
+    margin: 0 -12px 6px; padding: 3px 12px;
+    font-weight: bold;
+    background: #eef0f3; border-bottom: 1px solid #d4d8dd;
+  }
+  #panel .sec { margin-bottom: 10px; }
 
   #scale-note { color: #555; }
 
@@ -84,16 +117,16 @@
 <canvas id="view"></canvas>
 
 <div id="panel">
-  <div id="fields">
-    <b>field</b>
+  <div id="fields" class="sec">
+    <div class="sec-head">field</div>
     <div id="field-radios">
       <label><input type="radio" name="field" id="field-drift" value="drift" checked> Drift field</label>
       <label><input type="radio" name="field" id="field-weight" value="weight"> Weighting field</label>
     </div>
   </div>
 
-  <div id="layers">
-    <b>view</b>
+  <div id="layers" class="sec">
+    <div class="sec-head">layers</div>
     <div id="layer-buttons" role="group" aria-label="visible layers">
       <button id="layer-paths" class="layer active" aria-pressed="true">Drift paths</button>
       <button id="layer-slice" class="layer" aria-pressed="false">Potential slice</button>
@@ -103,6 +136,7 @@
   </div>
 
   <div id="potential-controls" hidden>
+    <div class="sec-head">potential slice</div>
     <div id="axis-radios">
       <label><input type="radio" name="slice-axis" id="axis-x" value="x"> yz (x-slice)</label>
       <label><input type="radio" name="slice-axis" id="axis-y" value="y"> xz (y-slice)</label>
@@ -118,9 +152,12 @@
       </div>
       <span id="volt-readout"></span>
     </div>
-    <label for="iso-opacity">isosurface <span id="iso-opacity-label"></span></label>
-    <input type="range" id="iso-opacity" min="0.02" max="1" step="0.02" value="0.35">
-    <div id="iso-levels"></div>
+    <div id="iso-controls" class="sec">
+      <div class="sec-head">isosurfaces</div>
+      <label for="iso-opacity">isosurface <span id="iso-opacity-label"></span></label>
+      <input type="range" id="iso-opacity" min="0.02" max="1" step="0.02" value="0.35">
+      <div id="iso-levels"></div>
+    </div>
 
     <div id="modes">
       <b>display</b>
@@ -143,7 +180,8 @@
       </div>
     </div>
 
-    <div id="contour-controls">
+    <div id="contour-controls" class="sec">
+      <div class="sec-head">contours</div>
       <button id="layer-contours" class="layer" aria-pressed="false">Contours</button>
       <label for="contour-count">levels <span id="contour-count-label"></span></label>
       <input type="range" id="contour-count" min="100" max="5000" step="100" value="200">
@@ -153,20 +191,32 @@
     </div>
   </div>
 
-  <div id="groups"></div>
+  <div id="boundary-controls" class="sec">
+    <div class="sec-head">boundary groups</div>
+    <div id="groups"></div>
+  </div>
 
-  <label for="npaths">paths shown</label>
-  <input type="range" id="npaths" min="1" max="100" value="100">
+  <div id="paths-controls" class="sec">
+    <div class="sec-head">paths</div>
+    <label for="npaths">paths shown</label>
+    <input type="range" id="npaths" min="1" max="100" value="100">
+  </div>
 
-  <label for="zscale">z compression</label>
-  <input type="range" id="zscale" min="1" max="40" step="1" value="10">
-  <span id="scale-note"></span>
+  <div id="view-controls" class="sec">
+    <div class="sec-head">view</div>
+    <label for="zscale">z compression</label>
+    <input type="range" id="zscale" min="1" max="40" step="1" value="10">
+    <span id="scale-note"></span>
 
-  <button id="reset-scale">x1 (true scale)</button>
-  <button id="reset-view">reset view</button>
+    <button id="reset-scale">x1 (true scale)</button>
+    <button id="reset-view">reset view</button>
+  </div>
 
-  <div id="pivot-readout"></div>
-  <button id="center-domain">center on domain</button>
+  <div id="pivot-controls" class="sec">
+    <div class="sec-head">pivot</div>
+    <div id="pivot-readout"></div>
+    <button id="center-domain">center on domain</button>
+  </div>
 
   <div id="shortcuts">
     <b>keys</b>
