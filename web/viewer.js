@@ -12,6 +12,7 @@ import {
   updatePivot,
   updatePivotReadout,
 } from "./nav.js";
+import { createViewCube } from "./viewcube.js";
 
 const scene_data = await (await fetch("data/scene.json")).json();
 console.log(scene_data.meta);
@@ -167,6 +168,9 @@ frameView();
 const pivot = createPivot(scene);
 const pivotReadout = document.getElementById("pivot-readout");
 
+// Orientation gizmo. Takes over clearing, so the main pass clears explicitly.
+const viewCube = createViewCube(renderer, camera);
+
 // Hover a trajectory to identify it, so the bundle is inspectable rather than
 // decorative.
 const readout = document.getElementById("readout");
@@ -217,6 +221,7 @@ window.addEventListener("resize", () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  viewCube.onResize();
 });
 
 function animate() {
@@ -224,6 +229,8 @@ function animate() {
   controls.update();
   updatePivot(pivot, camera, controls);
   updatePivotReadout(pivotReadout, controls, sceneRoot);
+  renderer.clear(); // autoClear is off for the gizmo pass
   renderer.render(scene, camera);
+  viewCube.render();
 }
 animate();
