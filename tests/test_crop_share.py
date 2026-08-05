@@ -129,7 +129,11 @@ def test_both_the_max_and_the_share_appear(tmp_path, capsys):
     run(root, tmp_path / "d", "--zmax", "8")
 
     line = crop_line(capsys.readouterr())
-    assert "per-plane max beyond" in line
+    # UPDATED for cc60c10: the max clause was reworded from "per-plane max
+    # beyond z=N" to "largest discarded value", and the line now also names the
+    # mm position out to which real field is being thrown away.
+    assert "largest discarded value" in line
+    assert "DISCARDING" in line
     assert "discarded" in line
     assert "% of the total magnitude" in line
 

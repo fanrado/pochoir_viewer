@@ -331,16 +331,29 @@ def test_export_rejects_an_unknown_field(root, tmp_path):
 
 
 def test_export_potential_weight_uses_the_documented_defaults(root, tmp_path, capsys):
-    """--field weight implies stride 2,2,1 and zmax 300 unless overridden."""
+    """UPDATED for cc60c10: --field weight now strides (2, 2, 2) and does NOT
+    crop. The field carries real structure to the far end of the domain, so the
+    default trades z resolution for coverage rather than discarding the tail."""
     dest = tmp_path / "d"
 
     main(["export-potential", "--root", str(root), "--dest-dir", str(dest),
           "--field", "weight"])
 
     meta = json.loads((dest / "potential_weight.json").read_text())
-    assert meta["stride"] == [2, 2, 1]
-    assert meta["zmax"] == 300
+    assert meta["stride"] == [2, 2, 2]
+    assert meta["zmax"] is None
     assert meta["units"] == "dimensionless"
+
+
+def test_the_weight_default_keeps_the_whole_z_axis(root, tmp_path):
+    """No crop means every z sample is represented, subject only to the stride."""
+    dest = tmp_path / "d"
+
+    main(["export-potential", "--root", str(root), "--dest-dir", str(dest),
+          "--field", "weight"])
+
+    meta = json.loads((dest / "potential_weight.json").read_text())
+    assert meta["shape"][2] == -(-40 // 2)  # ceil(40 / 2), the full axis strided
 
 
 def test_export_potential_drift_keeps_the_identity_stride(root, tmp_path):
@@ -363,7 +376,9 @@ def test_an_explicit_stride_overrides_the_weight_default(root, tmp_path):
     assert meta["stride"] == [1, 1, 2]
 
 
-def test_an_explicit_zmax_overrides_the_weight_default(root, tmp_path):
+def test_an_explicit_zmax_still_crops(root, tmp_path):
+    # UPDATED for cc60c10: there is no zmax default to override any more, but
+    # passing one must still crop. Shape is ceil(12 / stride_z).
     dest = tmp_path / "d"
 
     main(["export-potential", "--root", str(root), "--dest-dir", str(dest),
@@ -371,7 +386,7 @@ def test_an_explicit_zmax_overrides_the_weight_default(root, tmp_path):
 
     meta = json.loads((dest / "potential_weight.json").read_text())
     assert meta["zmax"] == 12
-    assert meta["shape"][2] == 12
+    assert meta["shape"][2] == 6
 
 
 def test_zstride_suppresses_the_weight_stride_default(root, tmp_path):
@@ -393,7 +408,7 @@ def test_the_crop_report_states_what_was_dropped(root, tmp_path, capsys):
 
     out = capsys.readouterr().out
     assert "cropped at z=12" in out
-    assert "max beyond" in out
+    assert "DISCARDING" in out
 
 
 def test_no_crop_report_when_nothing_is_dropped(root, tmp_path, capsys):
@@ -433,7 +448,7 @@ def test_the_summary_states_the_field_and_stride(root, tmp_path, capsys):
 
     out = capsys.readouterr().out
     assert "field weight" in out
-    assert "[2, 2, 1]" in out
+    assert "[2, 2, 2]" in out
 
 
 def test_export_potential_rejects_an_unknown_field(root, tmp_path):
