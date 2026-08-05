@@ -21,6 +21,7 @@ import {
   createContourView,
   createSliceView,
   fetchPotential,
+  renderPayloadInfo,
   wireScaleControls,
   wireSliceModes,
   uvToVoxel,
@@ -350,6 +351,9 @@ function buildPotential(meta, volume) {
     contourView.update(axis, index),
   );
   colorbar = createColorbar(meta);
+  // extentMm is already the new field's domain here (selectField refreshes it
+  // before loading the potential), so a cropped payload is caught on switch too.
+  renderPayloadInfo(meta, extentMm);
   const isoMeshes = buildIsoSurfaces(
     meta,
     isoGroup,

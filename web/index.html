@@ -83,6 +83,10 @@
     margin-bottom: 10px; border-top: 1px solid #ccc; border-bottom: 1px solid #ccc;
     padding: 8px 0;
   }
+  /* white-space: pre-line so a crop warning sits on its own line under the
+     extent readout without needing extra markup. */
+  #payload-info { color: #555; font-size: 11px; white-space: pre-line; }
+  #payload-info.payload-cropped { color: #a05000; font-weight: bold; }
   #axis-radios label { display: inline-block; margin: 0 6px 0 0; }
   #colorbar-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
   #colorbar { border: 1px solid #999; }
@@ -137,6 +141,7 @@
 
   <div id="potential-controls" hidden>
     <div class="sec-head">potential slice</div>
+    <div id="payload-info"></div>
     <div id="axis-radios">
       <label><input type="radio" name="slice-axis" id="axis-x" value="x"> yz (x-slice)</label>
       <label><input type="radio" name="slice-axis" id="axis-y" value="y"> xz (y-slice)</label>

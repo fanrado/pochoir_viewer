@@ -171,6 +171,80 @@ export function voxelReading(volume, meta, i, j, k) {
   };
 }
 
+/**
+ * True millimetre extent of a loaded payload, with its sample counts.
+ *
+ * Each axis holds every stride[k]-th sample, so the span it covers is
+ * shape[k] * stride[k] * spacing[k] — not shape[k] * spacing[k], which would
+ * report a strided export at a fraction of its real size.
+ */
+export function payloadExtent(meta) {
+  const stride = metaStride(meta);
+  const voxel = meta.spacing.map((s, k) => stride[k] * s);
+  return {
+    shape: [...meta.shape],
+    stride,
+    voxel,
+    mm: meta.shape.map((n, k) => n * voxel[k]),
+  };
+}
+
+/**
+ * Which axes of `meta` fail to cover the scene domain.
+ *
+ * A payload may legitimately end one voxel short of the domain, since the
+ * extent above counts whole voxels; anything more than that is a real crop.
+ * Returns one entry per short axis, empty when the payload covers the domain.
+ */
+export function payloadShortfall(meta, sceneExtentMm) {
+  if (!sceneExtentMm) return [];
+  const { mm, voxel } = payloadExtent(meta);
+  const shortfall = [];
+  for (let k = 0; k < 3; k += 1) {
+    const domain = sceneExtentMm[k];
+    if (domain == null) continue;
+    if (mm[k] < domain - voxel[k]) {
+      shortfall.push({ axis: "xyz"[k], mm: mm[k], domain });
+    }
+  }
+  return shortfall;
+}
+
+/**
+ * Show the loaded payload's extent, and warn when it does not reach the domain.
+ *
+ * This exists because a stale export already cost a debugging round: Step 13.1
+ * changed the weighting default from a 30 mm z crop to the full 160.1 mm
+ * domain, but web/data/ is gitignored, so the viewer kept loading the cropped
+ * payload. The slice stopped a few mm past the pixel plane and nothing on
+ * screen said the data — rather than the rendering — was short.
+ *
+ * Called once per payload load, never per frame.
+ */
+export function renderPayloadInfo(meta, sceneExtentMm, doc = globalThis.document) {
+  const box = doc.getElementById("payload-info");
+  if (!box) return null;
+
+  const { shape, stride, mm } = payloadExtent(meta);
+  const fmt = (v) => v.toFixed(1);
+  const text =
+    `volume ${mm.map(fmt).join(" x ")} mm` +
+    `  (${shape.join(" x ")}, stride ${stride.join(",")})`;
+
+  const shortfall = payloadShortfall(meta, sceneExtentMm);
+  const warnings = shortfall.map(({ axis, mm: extent, domain }) =>
+    axis === "z"
+      ? `payload cropped at ${fmt(extent)} mm - re-export without --zmax ` +
+        `to reach the cathode (${fmt(domain)} mm)`
+      : `payload cropped at ${fmt(extent)} mm along ${axis} - the domain is ` +
+        `${fmt(domain)} mm`,
+  );
+
+  box.textContent = [text, ...warnings].join("\n");
+  box.classList.toggle("payload-cropped", warnings.length > 0);
+  return { text, warnings };
+}
+
 /** Draw the vertical colorbar and its hover tick. */
 export function createColorbar(meta, doc = globalThis.document) {
   const canvas = doc.getElementById("colorbar");
