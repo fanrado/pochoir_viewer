@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .boundary import boundary_groups
 from .grid import Grid
-from .io import load_npz
+from .io import find_drift, load_npz
 from .paths import decimate, load_paths, path_summaries, trim_stagnant
 
 #: Micron precision, adequate at 0.1 mm node spacing.
@@ -36,7 +36,7 @@ def build_scene(
     """Build the complete viewer scene for a pochoir output directory."""
     root = Path(root)
 
-    _, mask = load_npz(root / "boundary" / "drift.npz")
+    _, mask = load_npz(find_drift(root, "boundary", "field"))
     grid = Grid.from_shape(mask.shape, spacing=spacing)
     paths, endtags = load_paths(root)
 

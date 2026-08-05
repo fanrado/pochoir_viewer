@@ -9,14 +9,14 @@ from pathlib import Path
 
 import numpy as np
 
-from .io import load_npz
+from .io import find_drift, load_npz
 
 
 def load_paths(root: str | Path) -> tuple[np.ndarray, np.ndarray]:
     """Return ``(paths, endtags)`` for a dataset root."""
     root = Path(root)
-    _, paths = load_npz(root / "paths" / "drift3d.npz")
-    _, endtags = load_npz(root / "paths" / "drift3d_endtag.npz")
+    _, paths = load_npz(find_drift(root, "paths", "field"))
+    _, endtags = load_npz(find_drift(root, "paths", "endtag"))
     return paths, endtags
 
 
