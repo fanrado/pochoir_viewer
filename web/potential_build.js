@@ -154,10 +154,11 @@ export function slicePlaneParams(axis, index, meta) {
   const zstride = meta.zstride ?? 1;
   const origin = meta.origin ?? [0, 0, 0];
 
-  // Full spans of the volume in mm, with z carrying the stride.
-  const spanX = (ni - 1) * sx;
-  const spanY = (nj - 1) * sy;
-  const spanZ = (nk - 1) * zstride * sz;
+  // Node (i,j,k) is the lower corner of its cell; spans are n*spacing to match
+  // boundary.py and Grid.extent_mm. z carries the stride.
+  const spanX = ni * sx;
+  const spanY = nj * sy;
+  const spanZ = nk * zstride * sz;
 
   const midX = origin[0] + spanX / 2;
   const midY = origin[1] + spanY / 2;
@@ -168,12 +169,15 @@ export function slicePlaneParams(axis, index, meta) {
     return { width: spanX, height: spanY, center: [midX, midY, at], rotation: [0, 0, 0] };
   }
   if (axis === "x") {
-    // Face +x: rotate the +z-facing plane about y.
+    // extractSlice gives (j, k) as (width, height), so the plane must be
+    // spanY across by spanZ tall. This Euler triple maps texture U to world +y
+    // and texture V to world +z, with the normal along +x — verified against
+    // the actual rotation matrix, since [0, PI/2, 0] instead sends U to -z.
     return {
-      width: spanZ,
-      height: spanY,
+      width: spanY,
+      height: spanZ,
       center: [at, midY, midZ],
-      rotation: [0, Math.PI / 2, 0],
+      rotation: [Math.PI / 2, Math.PI / 2, 0],
     };
   }
   // Face +y: rotate the +z-facing plane about x.
