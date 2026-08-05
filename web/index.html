@@ -35,7 +35,7 @@
   #panel label { display: block; margin-top: 10px; }
   /* touch-action: none keeps a drag on the thumb from panning the scroll
      container instead of moving the slider. Covers #npaths, #zscale,
-     #slice-idx, #iso-opacity, #contour-count and #log-decades alike. */
+     #slice-idx, #contour-count and #log-decades alike. */
   #panel input[type=range] { width: 100%; touch-action: none; }
   #panel button { margin-top: 8px; width: 100%; }
   #groups label { margin-top: 4px; }
@@ -96,7 +96,6 @@
     display: flex; flex-direction: column; justify-content: space-between;
     height: 160px; font-size: 11px; color: #444;
   }
-  .iso-skipped { margin-top: 4px; color: #a05000; }
 
   #shortcuts { margin-top: 12px; border-top: 1px solid #ccc; padding-top: 8px; color: #444; }
   #shortcuts kbd {
@@ -136,7 +135,6 @@
     <div id="layer-buttons" role="group" aria-label="visible layers">
       <button id="layer-paths" class="layer active" aria-pressed="true">Drift paths</button>
       <button id="layer-slice" class="layer" aria-pressed="false">Potential slice</button>
-      <button id="layer-iso" class="layer" aria-pressed="false">Isosurfaces</button>
       <button id="layer-boundary" class="layer active" aria-pressed="true">Boundary</button>
     </div>
   </div>
@@ -159,13 +157,6 @@
       </div>
       <span id="volt-readout"></span>
     </div>
-    <div id="iso-controls" class="sec">
-      <div class="sec-head">isosurfaces</div>
-      <label for="iso-opacity">isosurface <span id="iso-opacity-label"></span></label>
-      <input type="range" id="iso-opacity" min="0.02" max="1" step="0.02" value="0.35">
-      <div id="iso-levels"></div>
-    </div>
-
     <div id="modes">
       <b>display</b>
       <div id="mode-buttons" role="group" aria-label="slice display mode">
