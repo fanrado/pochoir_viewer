@@ -114,15 +114,80 @@ export function rampPosition(value, vmin, vmax) {
   return Math.min(Math.max((value - vmin) / (vmax - vmin), 0), 1);
 }
 
-/** Map `values` through the ramp into RGBA bytes. */
-export function valuesToRGBA(values, vmin, vmax) {
+const DEFAULT_SCALE = { scale: "linear", decades: 8 };
+
+/**
+ * Validate a scaling option set, returning the log floor when relevant.
+ *
+ * Log scaling is rejected outright for signed data: the drift potential runs
+ * -9500..0 V and log10 of a negative is undefined, so failing loudly beats
+ * painting NaN colours.
+ */
+function scaleSetup(vmin, vmax, opts = DEFAULT_SCALE) {
+  const scale = opts?.scale ?? "linear";
+  if (scale === "linear") return { scale };
+
+  if (scale !== "log") {
+    throw new Error(`unknown scale ${scale}, expected "linear" or "log"`);
+  }
+  const decades = opts?.decades ?? DEFAULT_SCALE.decades;
+  if (!Number.isFinite(decades) || decades <= 0) {
+    throw new Error(`decades must be a positive finite number, got ${decades}`);
+  }
+  if (vmin < 0) {
+    throw new Error(
+      `log scale needs non-negative data, got vmin ${vmin} — ` +
+        "use the linear scale for signed fields such as the drift potential",
+    );
+  }
+  if (!(vmax > 0)) {
+    throw new Error(`log scale needs a positive vmax, got ${vmax}`);
+  }
+
+  // Everything this far below the maximum collapses onto the ramp start.
+  const floor = vmax * Math.pow(10, -decades);
+  return { scale, floor, logFloor: Math.log10(floor), logMax: Math.log10(vmax) };
+}
+
+/** Normalised ramp position of one value under `setup`. */
+function positionWith(value, vmin, vmax, setup) {
+  if (setup.scale === "linear") {
+    const span = vmax - vmin;
+    return span === 0 ? 0 : Math.min(Math.max((value - vmin) / span, 0), 1);
+  }
+  // Exact zeros and anything at or below the floor pin to the ramp start.
+  // log10(0) is -Infinity, which must never reach the ramp: the volume holds
+  // exact zeros past z = 1599 as well as values down to 3.4e-40.
+  if (!(value > setup.floor)) return 0;
+
+  const span = setup.logMax - setup.logFloor;
+  if (span === 0) return 0;
+  return Math.min(Math.max((Math.log10(value) - setup.logFloor) / span, 0), 1);
+}
+
+/**
+ * Normalised ramp position of `value`, shared with the colorbar.
+ *
+ * Exported so tick placement uses exactly the arithmetic that painted the
+ * image and cannot drift from it.
+ */
+export function scalePosition(value, vmin, vmax, opts = DEFAULT_SCALE) {
+  return positionWith(value, vmin, vmax, scaleSetup(vmin, vmax, opts));
+}
+
+/**
+ * Map `values` through the ramp into RGBA bytes.
+ *
+ * `opts.scale` is "linear" (unchanged, byte-identical behaviour) or "log".
+ * The weighting potential spans about 39.5 orders of magnitude, so a linear
+ * ramp renders everything past the pad region as one flat colour.
+ */
+export function valuesToRGBA(values, vmin, vmax, opts = DEFAULT_SCALE) {
+  const setup = scaleSetup(vmin, vmax, opts);
   const rgba = new Uint8Array(values.length * 4);
-  const span = vmax - vmin;
 
   for (let n = 0; n < values.length; n++) {
-    const raw = span === 0 ? 0 : (values[n] - vmin) / span;
-    const t = Math.min(Math.max(raw, 0), 1); // clamp outside [vmin, vmax]
-    const [r, g, b] = rampColor(t);
+    const [r, g, b] = rampColor(positionWith(values[n], vmin, vmax, setup));
     rgba[n * 4] = r;
     rgba[n * 4 + 1] = g;
     rgba[n * 4 + 2] = b;
