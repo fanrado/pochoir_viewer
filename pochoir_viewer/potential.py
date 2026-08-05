@@ -55,9 +55,15 @@ def volume_float32(
     bytes can be written straight to disk and read back as a Float32Array in
     the browser with no reordering.
 
-    The weighting potential is 310 MB at full resolution and numerically zero
-    past z index 265, so a z crop plus transverse stride is lossless in
-    practice. `zmax` beyond the array clamps rather than raising.
+    The weighting potential is 310 MB at full resolution, so a z crop plus a
+    transverse stride is what makes it shippable. The crop is LOSSY, and by
+    more than the peak residual suggests: the field decays smoothly and is not
+    exactly zero until z index 1599. Beyond z 265 the largest remaining value
+    is 1.0e-3 out of a 0..1 range but 1.46% of the total magnitude is
+    discarded; beyond the z 300 default it is 5.2e-4 and 0.76%. The share is
+    the number to weigh for induced charge, which integrates this field, and
+    every export-potential run prints both. See the crop table in README.md.
+    `zmax` beyond the array clamps rather than raising.
 
     `zstride` is the Phase 8 spelling and maps to ``stride=(1, 1, zstride)``;
     combining it with an explicit `stride` is contradictory and raises.

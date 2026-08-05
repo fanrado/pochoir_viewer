@@ -229,8 +229,7 @@ At full float32 resolution the weighting potential is **310 MB** — far too muc
 to hand a browser. `--field weight` therefore defaults to `--stride 2,2,1` and
 `--zmax 300`, giving a **14.5 MB** payload.
 
-That crop is lossless in practice, and the numbers are measured rather than
-assumed:
+That crop is lossy, and the numbers are measured rather than assumed:
 
 | beyond z index | largest remaining \|value\| | share of total \|value\| discarded |
 | --- | --- | --- |
