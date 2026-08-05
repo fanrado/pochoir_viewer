@@ -6,7 +6,12 @@
 
 import * as THREE from "three";
 
-/** Apparent pivot diameter, in pixels, held constant at every zoom level. */
+/**
+ * Apparent pivot RADIUS, in pixels, held constant at every zoom level.
+ *
+ * The sphere geometry has radius 1, so updatePivot's scale factor is a radius:
+ * 6 here draws a 12 px wide dot.
+ */
 const PIVOT_PX = 6;
 
 /**
@@ -76,7 +81,16 @@ export function recenterOn(point, camera, controls, ms = 300) {
 export function updatePivot(pivot, camera, controls) {
   pivot.position.copy(controls.target);
 
-  const heightPx = controls.domElement?.clientHeight || window.innerHeight;
+  // globalThis.window, not a bare window: this module is imported under node.
+  const heightPx =
+    controls.domElement?.clientHeight || globalThis.window?.innerHeight;
+
+  // No viewport to measure against (only reachable outside a browser): hide the
+  // marker rather than scaling it by NaN.
+  if (!heightPx) {
+    pivot.scale.setScalar(0);
+    return;
+  }
   const d = camera.position.distanceTo(controls.target);
   const s =
     (d * 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)) /
