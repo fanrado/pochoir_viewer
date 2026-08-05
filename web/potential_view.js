@@ -4,6 +4,7 @@
 // three.js objects, and the DOM wiring.
 
 import * as THREE from "three";
+import { contourSegments } from "./contour_build.js";
 import {
   extractSlice,
   rampPosition,
@@ -290,4 +291,137 @@ export function buildIsoSurfaces(meta, group, panel, doc = globalThis.document) 
   }
 
   return meshes;
+}
+
+/** Evenly spaced contour levels across (vmin, vmax), excluding the endpoints. */
+export function defaultContourLevels(meta, step = 1000) {
+  if (meta.units !== "V") return [...WEIGHT_CONTOUR_LEVELS];
+
+  const levels = [];
+  const first = Math.ceil(meta.vmin / step) * step;
+  for (let v = first; v < meta.vmax; v += step) {
+    if (v > meta.vmin) levels.push(v);
+  }
+  return levels;
+}
+
+/** Weighting-potential contour levels: log-ish, matching WEIGHT_LEVELS. */
+export const WEIGHT_CONTOUR_LEVELS = [0.9, 0.75, 0.5, 0.25, 0.1, 0.05, 0.01];
+
+/**
+ * Draw contour lines over the slice plane.
+ *
+ * Contours are placed with the SAME slicePlaneParams as the textured plane, so
+ * the lines cannot drift away from the colour bands they trace. Each level is
+ * nudged along the plane normal by a fraction of a voxel to stop it z-fighting
+ * with the texture.
+ */
+export function createContourView(meta, volume, sceneRoot, doc = document) {
+  const group = new THREE.Group();
+  group.name = "contourGroup";
+  group.visible = false;
+  sceneRoot.add(group);
+
+  const levelsPanel = doc.getElementById("contour-levels");
+  const legend = doc.getElementById("contour-legend");
+
+  let levels = defaultContourLevels(meta);
+  const enabled = new Map(levels.map((level) => [level, true]));
+  const objects = new Map();
+
+  const unit = meta.units === "V" ? " V" : "";
+  const label = (level) => `${level}${unit}`;
+
+  function colorFor(level) {
+    const [r, g, b] = rampRGB(rampPosition(level, meta.vmin, meta.vmax));
+    return new THREE.Color(`rgb(${r},${g},${b})`);
+  }
+
+  // One checkbox per level, plus a legend row naming value and unit.
+  for (const level of levels) {
+    const lines = new THREE.LineSegments(
+      new THREE.BufferGeometry(),
+      new THREE.LineBasicMaterial({ color: colorFor(level) }),
+    );
+    lines.name = `contour ${label(level)}`;
+    group.add(lines);
+    objects.set(level, lines);
+
+    if (levelsPanel) {
+      const row = doc.createElement("label");
+      const box = doc.createElement("input");
+      box.type = "checkbox";
+      box.checked = true;
+      box.addEventListener("change", () => {
+        enabled.set(level, box.checked);
+        lines.visible = box.checked;
+      });
+      row.append(box, ` ${label(level)}`);
+      levelsPanel.append(row);
+    }
+
+    if (legend) {
+      const row = doc.createElement("div");
+      const swatch = doc.createElement("span");
+      swatch.className = "contour-swatch";
+      swatch.style.background = `#${colorFor(level).getHexString()}`;
+      row.append(swatch, ` ${label(level)}`);
+      legend.append(row);
+    }
+  }
+
+  /** Rebuild every enabled level for the given slice. */
+  function update(axis, index) {
+    const slice = extractSlice(volume, meta.shape, axis, index);
+    const plane = slicePlaneParams(axis, index, meta);
+
+    // Offset along the normal by a fraction of a voxel: enough to clear the
+    // texture, too little to read as a gap.
+    const [sx, sy, sz] = meta.spacing;
+    const nudge =
+      0.02 * (axis === "x" ? sx : axis === "y" ? sy : sz * (meta.zstride ?? 1));
+    const normal = new THREE.Vector3(
+      axis === "x" ? 1 : 0,
+      axis === "y" ? 1 : 0,
+      axis === "z" ? 1 : 0,
+    ).multiplyScalar(nudge);
+
+    for (const [level, lines] of objects) {
+      if (!enabled.get(level)) {
+        lines.visible = false;
+        continue;
+      }
+      const segments = contourSegments(slice.values, slice.width, slice.height, level);
+
+      // UV -> plane-local -> world, using the plane's own transform.
+      const positions = new Float32Array((segments.length / 2) * 3);
+      for (let n = 0; n < segments.length; n += 2) {
+        positions[(n / 2) * 3] = (segments[n] - 0.5) * plane.width;
+        positions[(n / 2) * 3 + 1] = (segments[n + 1] - 0.5) * plane.height;
+        positions[(n / 2) * 3 + 2] = 0;
+      }
+
+      // Dispose the old buffer so repeated slider drags do not leak.
+      lines.geometry.dispose();
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+      lines.geometry = geometry;
+
+      lines.position.set(...plane.center).add(normal);
+      lines.rotation.set(...plane.rotation);
+      lines.visible = true;
+    }
+  }
+
+  // The group toggle lives here rather than in viewer.js so the contour layer
+  // owns all of its own DOM.
+  const toggle = doc.getElementById("layer-contours");
+  toggle?.addEventListener("click", () => {
+    const on = toggle.getAttribute("aria-pressed") !== "true";
+    toggle.setAttribute("aria-pressed", String(on));
+    toggle.classList.toggle("active", on);
+    group.visible = on;
+  });
+
+  return { group, update, levels: () => [...levels] };
 }
