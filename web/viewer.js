@@ -15,11 +15,13 @@ import {
 } from "./nav.js";
 import { createViewCube, enableViewCubePicking } from "./viewcube.js";
 import {
+  buildIsoLegend,
   buildIsoSurfaces,
   createColorbar,
   createContourView,
   createSliceView,
   fetchPotential,
+  wireSliceModes,
   uvToVoxel,
   voxelReading,
   wireSliceControls,
@@ -286,6 +288,7 @@ let contourView = null;
 let potentialVolume = null;
 let potentialMeta = null;
 let colorbar = null;
+let sliceModes = null;
 
 /** Payload URLs per field. Drift keeps the Phase 8 names. */
 const FIELD_FILES = {
@@ -345,11 +348,18 @@ function buildPotential(meta, volume) {
     contourView.update(axis, index),
   );
   colorbar = createColorbar(meta);
-  buildIsoSurfaces(meta, isoGroup, document.getElementById("iso-levels"));
+  const isoMeshes = buildIsoSurfaces(
+    meta,
+    isoGroup,
+    document.getElementById("iso-levels"),
+  );
+  buildIsoLegend(isoMeshes);
 
-  // Honour whatever the layer buttons currently say.
+  // Honour whatever the layer buttons currently say, then let the display mode
+  // decide between image, contours, or both.
   sliceView.mesh.visible = pressed("layer-slice");
   contourView.group.visible = pressed("layer-contours");
+  sliceModes = wireSliceModes(sliceView, contourView);
 }
 
 function pressed(id) {

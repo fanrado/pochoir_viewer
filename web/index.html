@@ -22,6 +22,8 @@
 
   #fields { margin-bottom: 10px; }
   #field-radios label { display: block; margin-top: 2px; }
+  #modes { margin-top: 8px; }
+  #mode-buttons { display: flex; gap: 4px; margin-top: 4px; }
   #contour-controls { margin-top: 8px; border-top: 1px solid #ddd; padding-top: 6px; }
   #contour-levels label { margin-top: 2px; }
   #contour-legend { color: #444; }
@@ -113,6 +115,15 @@
     <label for="iso-opacity">isosurface <span id="iso-opacity-label"></span></label>
     <input type="range" id="iso-opacity" min="0.02" max="1" step="0.02" value="0.35">
     <div id="iso-levels"></div>
+
+    <div id="modes">
+      <b>display</b>
+      <div id="mode-buttons" role="group" aria-label="slice display mode">
+        <button id="mode-image" class="layer" aria-pressed="false">Image</button>
+        <button id="mode-contours" class="layer" aria-pressed="false">Contours</button>
+        <button id="mode-both" class="layer active" aria-pressed="true">Both</button>
+      </div>
+    </div>
 
     <div id="contour-controls">
       <button id="layer-contours" class="layer" aria-pressed="false">Contours</button>

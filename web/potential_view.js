@@ -362,7 +362,8 @@ export function buildIsoSurfaces(
     applyIsoOpacity(material, opacity);
 
     const mesh = new THREE.Mesh(geometry, material);
-    mesh.name = `iso ${surface.level} V`;
+    // Units follow the field, so a weighting shell is not labelled in volts.
+    mesh.name = `iso ${surface.level}${(meta.units ?? "V") === "V" ? " V" : ""}`;
     // Outermost shell (highest rank) draws first.
     // Lower renderOrder draws first, so the outermost shell leads.
     mesh.renderOrder = -rankOf.get(index) || 0;
@@ -375,7 +376,11 @@ export function buildIsoSurfaces(
     box.type = "checkbox";
     box.checked = true;
     box.addEventListener("change", () => { mesh.visible = box.checked; });
-    label.append(box, ` ${surface.level} V (${surface.n_tris} tris)`);
+    label.append(
+      box,
+      ` ${surface.level}${(meta.units ?? "V") === "V" ? " V" : ""}` +
+        ` (${surface.n_tris} tris)`,
+    );
     panel.append(label);
   }
 
@@ -525,4 +530,75 @@ export function createContourView(meta, volume, sceneRoot, doc = globalThis.docu
   });
 
   return { group, update, levels: () => [...levels] };
+}
+
+/**
+ * Exclusive display mode for the slice: image, contours, or both.
+ *
+ * Contours mode hides the textured plane entirely rather than fading it, so the
+ * result is a clean line plot with nothing bleeding through from behind.
+ * Switching modes touches only visibility — never the camera, the contour level
+ * selection, or the slice index.
+ */
+export const SLICE_MODES = ["image", "contours", "both"];
+
+export function wireSliceModes(sliceView, contourView, doc = globalThis.document) {
+  const buttons = new Map(
+    SLICE_MODES.map((mode) => [mode, doc.getElementById(`mode-${mode}`)]),
+  );
+
+  let mode =
+    SLICE_MODES.find(
+      (m) => buttons.get(m)?.getAttribute("aria-pressed") === "true",
+    ) ?? "both";
+
+  function apply() {
+    for (const [name, button] of buttons) {
+      const on = name === mode;
+      button?.setAttribute("aria-pressed", String(on));
+      button?.classList?.toggle("active", on);
+    }
+    if (sliceView) sliceView.mesh.visible = mode !== "contours";
+    if (contourView) contourView.group.visible = mode !== "image";
+  }
+
+  for (const [name, button] of buttons) {
+    button?.addEventListener("click", () => {
+      mode = name;
+      apply();
+    });
+  }
+
+  apply();
+  return { getMode: () => mode, apply };
+}
+
+/**
+ * Fill the legend with the isosurface palette swatches.
+ *
+ * Step 11.2 broke the old legend by decoupling shell colour from the colorbar;
+ * these swatches restore it, so a bright shell can still be read as a value.
+ */
+export function buildIsoLegend(meshes, doc = globalThis.document) {
+  const legend = doc.getElementById("contour-legend");
+  if (!legend) return;
+
+  legend.replaceChildren?.();
+  const heading = doc.createElement("div");
+  heading.textContent = "isosurfaces";
+  legend.append(heading);
+
+  // Innermost (highest level) first, matching the palette order.
+  const rows = [...meshes].sort(
+    (a, b) => Number(b.name.split(" ")[1]) - Number(a.name.split(" ")[1]),
+  );
+  for (const mesh of rows) {
+    const row = doc.createElement("div");
+    const swatch = doc.createElement("span");
+    swatch.className = "contour-swatch";
+    // Taken from the rendered material, so the swatch cannot drift from the shell.
+    swatch.style.background = `#${mesh.material.color.getHexString()}`;
+    row.append(swatch, ` ${mesh.name.replace(/^iso /, "")}`);
+    legend.append(row);
+  }
 }

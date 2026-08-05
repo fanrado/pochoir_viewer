@@ -5,6 +5,7 @@ import { test } from "node:test";
 import * as THREE from "three";
 
 import {
+  ISO_PALETTE,
   axisExtent,
   buildIsoSurfaces,
   createColorbar,
@@ -553,14 +554,24 @@ test("meshes are named with their level", () => {
   assert.equal(meshes[0].name, "iso -2000 V");
 });
 
-test("surface colour comes from the shared ramp position", () => {
-  // A sheet's colour must match its place on the colorbar.
+test("surface colour comes from the fixed shell palette, not the ramp", () => {
+  // UPDATED for 1567cf4, which deliberately reversed Step 8.13 for the shells:
+  // low weighting values sit at the dark end of the colorbar ramp, so
+  // ramp-derived shells were muddy and indistinguishable. The colorbar still
+  // governs the slice image; see potential_build.test.js for that.
   const group = new THREE.Group();
 
   const meshes = buildIsoSurfaces(meta({ isosurfaces: SURFACES }), group, null, fakeDoc());
 
-  const [r, g, b] = rampRGB(rampPosition(-2000, -8000, 0));
-  assert.equal(meshes[0].material.color.getHex(), new THREE.Color(`rgb(${r},${g},${b})`).getHex());
+  const palette = ISO_PALETTE.map((hex) => new THREE.Color(hex).getHex());
+  for (const mesh of meshes) {
+    assert.ok(palette.includes(mesh.material.color.getHex()), mesh.name);
+  }
+  const rampHex = (() => {
+    const [r, g, b] = rampRGB(rampPosition(-2000, -8000, 0));
+    return new THREE.Color(`rgb(${r},${g},${b})`).getHex();
+  })();
+  assert.notEqual(meshes[0].material.color.getHex(), rampHex);
 });
 
 test("deeper levels get a different colour", () => {
@@ -572,12 +583,14 @@ test("deeper levels get a different colour", () => {
 });
 
 test("surfaces are translucent and double-sided", () => {
+  // UPDATED for 1567cf4: the default opacity moved from 0.3 to 0.35 and is now
+  // a parameter driven by the slider.
   const group = new THREE.Group();
 
   const [mesh] = buildIsoSurfaces(meta({ isosurfaces: SURFACES }), group, null, fakeDoc());
 
   assert.equal(mesh.material.transparent, true);
-  assert.equal(mesh.material.opacity, 0.3);
+  assert.equal(mesh.material.opacity, 0.35);
   assert.equal(mesh.material.side, THREE.DoubleSide);
 });
 
