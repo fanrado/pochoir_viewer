@@ -64,6 +64,10 @@ function buildBoundaryMesh(group, index) {
   return mesh;
 }
 
+const sceneRoot = new THREE.Group();
+sceneRoot.name = "sceneRoot";
+scene.add(sceneRoot);
+
 const boundaryGroup = new THREE.Group();
 boundaryGroup.name = "boundaryGroup";
 
@@ -82,7 +86,7 @@ scene_data.boundary.forEach((group, index) => {
   groupsPanel.append(label);
 });
 
-scene.add(boundaryGroup);
+sceneRoot.add(boundaryGroup);
 
 // All 100 paths live in one buffer: 100 Line objects would be 100 draw calls,
 // and one buffer also gives the hover raycast a single target.
@@ -132,7 +136,7 @@ const pathLines = new THREE.LineSegments(
   new THREE.LineBasicMaterial({ vertexColors: true }),
 );
 pathLines.name = "pathLines";
-scene.add(pathLines);
+sceneRoot.add(pathLines);
 
 /** Vertex offset just past path N-1, i.e. the draw count showing N paths. */
 function offsetOfPath(n) {
@@ -147,6 +151,68 @@ npathsInput.addEventListener("input", () => {
   pathGeometry.setDrawRange(0, offsetOfPath(Number(npathsInput.value)));
 });
 pathGeometry.setDrawRange(0, offsetOfPath(Number(npathsInput.value)));
+
+// The domain is 36:1 (160.1 mm drift vs 4.4 mm transverse) and unviewable at
+// true scale, but compressing z misrepresents drift angles — so whatever
+// scaling is applied is always stated on screen and undone in one click.
+const [EXTENT_X, EXTENT_Y] = scene_data.meta.extent_mm;
+const zscaleInput = document.getElementById("zscale");
+const scaleNote = document.getElementById("scale-note");
+
+const fmt = (v) => v.toFixed(1);
+
+function currentFactor() {
+  return Number(zscaleInput.value);
+}
+
+/** The box as displayed, i.e. with z divided by the current factor. */
+function displayedExtent() {
+  return [EXTENT_X, EXTENT_Y, EXTENT_Z / currentFactor()];
+}
+
+function frameView() {
+  const extent = displayedExtent();
+  const center = new THREE.Vector3(...extent.map((v) => v / 2));
+  const radius = 0.5 * Math.hypot(...extent);
+  const distance = radius / Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
+
+  // Look in along a diagonal so all three axes are legible.
+  const direction = new THREE.Vector3(1, 1, 0.6).normalize();
+  camera.position.copy(center).addScaledVector(direction, distance);
+  camera.lookAt(center);
+  controls.target.copy(center);
+  controls.update();
+}
+
+function updateScaleNote() {
+  const factor = currentFactor();
+  const trueDims = `${fmt(EXTENT_X)} x ${fmt(EXTENT_Y)} x ${fmt(EXTENT_Z)} mm`;
+  if (factor === 1) {
+    scaleNote.textContent = `z x1 (true scale) - ${trueDims}`;
+    return;
+  }
+  const shown = displayedExtent().map(fmt).join(" x ");
+  scaleNote.textContent =
+    `z x${factor} - true domain ${trueDims}, shown as ${shown} mm`;
+}
+
+function applyScale() {
+  sceneRoot.scale.z = 1 / currentFactor();
+  updateScaleNote();
+}
+
+zscaleInput.addEventListener("input", applyScale);
+
+document.getElementById("reset-scale").addEventListener("click", () => {
+  zscaleInput.value = "1";
+  applyScale();
+  frameView();
+});
+
+document.getElementById("reset-view").addEventListener("click", frameView);
+
+applyScale();
+frameView();
 
 window.addEventListener("resize", () => {
   camera.aspect = window.innerWidth / window.innerHeight;
