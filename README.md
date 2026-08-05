@@ -200,3 +200,86 @@ The **-2000 V isosurface coincides with the grid plane at z = 13.1 mm.** Turn on
 both **Isosurfaces** and **Boundary** and that sheet should sit flush with the
 grid surface. If it floats away from it, something in the export or the grid
 spacing is wrong — it is a free correctness check on the whole pipeline.
+
+## The weighting field
+
+The viewer shows two fields. The **field** selector at the top of the panel
+switches between them; it is exclusive, unlike the layer buttons below it.
+
+The weighting domain is a different size from the drift one: **220 x 220 x 1601
+nodes = 22.0 x 22.0 x 160.1 mm**, five times wider transversely. Switching
+fields refits the camera and restates the extent, because framing that suits one
+domain leaves the other off-screen.
+
+### Exporting it
+
+Two more commands, alongside the drift ones:
+
+```bash
+python -m pochoir_viewer export --field weight --dest web/data/scene_weight.json
+python -m pochoir_viewer export-potential --field weight --dest-dir web/data
+```
+
+The weighting payload is written as `scene_weight.json`, `potential_weight.bin`
+and `potential_weight.json`, so both fields can sit in `web/data` at once.
+
+### Why it is strided and cropped
+
+At full float32 resolution the weighting potential is **310 MB** — far too much
+to hand a browser. `--field weight` therefore defaults to `--stride 2,2,1` and
+`--zmax 300`, giving a **14.5 MB** payload.
+
+That crop is lossless in practice, and the numbers are measured rather than
+assumed:
+
+| beyond z index | largest remaining \|value\| |
+| --- | --- |
+| 265 | below 1e-3 |
+| 300 (the default crop) | 5.2e-4 |
+| 600 | 1.4e-7 |
+
+The field decays smoothly rather than terminating: it is not *exactly* zero
+until z = 1599. So the crop does discard signal, but at the default it discards
+nothing larger than 5.2e-4 out of a 0..1 range. Both `--stride` and `--zmax`
+override the defaults if you want the full volume, and every run prints the crop
+together with the largest value it dropped.
+
+### What is different in the weighting view
+
+- **No drift paths.** The weighting domain contains none, so the **Drift paths**
+  layer button is disabled while the weighting field is selected.
+- **Boundary groups are labelled by z position** — `z 0.0 mm`,
+  `z 9.8-10.1 mm`, `z 13.1 mm`, `z 159.9-160.1 mm` — rather than
+  anode/grid/cathode. The weighting boundary has full planes at z = 0 and at
+  z = 1599-1600, and the role heuristic would confidently label the z = 0 plane
+  "anode", which it is not. Position is what is actually known.
+- **Units are dimensionless.** The weighting potential runs 0..1, so the
+  colorbar, the hover readout and the contour legend all drop the volt suffix.
+  Nothing in the UI hardcodes volts; it all reads the exported units.
+- **The 3D view is nested shells.** The isosurfaces run 0.9, 0.75, 0.5, 0.25,
+  0.1, 0.05, 0.01 — deliberately log-ish, since the potential falls off fast
+  (1.0 at the pad, 0.115 at the grid, 0.0025 by z = 150). Each level is a closed
+  **shell wrapping a pad**, not a flat sheet above it: the potential is 1.0 only
+  on the pad itself and falls away in every direction, so the 0.5 shell spans
+  z 8.4-11.2 mm, straddling the pad plane at 9.8-10.0 mm.
+
+### Slices and contours
+
+The axis buttons name both the plane and its normal:
+
+| button | plane | normal |
+| --- | --- | --- |
+| **xy (z-slice)** | xy | z |
+| **yz (x-slice)** | yz | x |
+| **xz (y-slice)** | xz | y |
+
+**Contours** overlays iso-lines on whichever slice is showing, with a checkbox
+per level and a legend. Levels are evenly spaced every 1000 V for the drift
+field and use the log-ish 0.9..0.01 set for the weighting field, and the legend
+carries the unit for whichever field is loaded. Contour colours come from the
+same ramp as the slice image and the colorbar, so a line always matches the band
+it traces.
+
+Note that an xy slice of the *drift* potential is nearly uniform — that field is
+essentially one-dimensional in z — so contours there are sparse or absent by
+nature. The yz and xz planes are where the drift structure is legible.
