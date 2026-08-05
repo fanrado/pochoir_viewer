@@ -20,7 +20,16 @@ DRIFT_FIELD_NAMES = ("drift3d.npz", "drift.npz")
 #: Accepted spellings of the drift endtag array, in precedence order.
 DRIFT_ENDTAG_NAMES = ("drift3d_endtag.npz", "drift_endtag.npz")
 
+#: Accepted spellings of the weighting field array, in precedence order.
+WEIGHT_FIELD_NAMES = ("weight3d.npz", "weight.npz")
+
 _DRIFT_KINDS = {"field": DRIFT_FIELD_NAMES, "endtag": DRIFT_ENDTAG_NAMES}
+
+#: Candidate filenames per (field, kind). The weighting field has no endtag.
+_FIELD_KINDS = {
+    "drift": _DRIFT_KINDS,
+    "weight": {"field": WEIGHT_FIELD_NAMES},
+}
 
 
 def load_npz(path: str | Path) -> tuple[str, np.ndarray]:
@@ -50,24 +59,34 @@ def list_datasets(root: str | Path) -> list[Path]:
     )
 
 
-def find_drift(root: str | Path, subdir: str, kind: str = "field") -> Path:
-    """Resolve the drift array in ``root/subdir``, accepting either spelling.
+def find_field(
+    root: str | Path, subdir: str, field: str = "drift", kind: str = "field"
+) -> Path:
+    """Resolve a field array in ``root/subdir``, accepting either spelling.
 
-    pochoir writes ``drift.npz`` under some subdirectories and ``drift3d.npz``
-    under others, with identical contents. Candidates are tried in the order
-    given by :data:`DRIFT_FIELD_NAMES` / :data:`DRIFT_ENDTAG_NAMES`, so if a
-    directory somehow holds both spellings ``drift3d.npz`` wins as the
-    explicitly-3D name. That precedence only guards against ambiguity.
+    pochoir writes ``drift.npz``/``weight.npz`` under some subdirectories and
+    ``drift3d.npz``/``weight3d.npz`` under others, with identical contents.
+    Candidates are tried in the order given by :data:`DRIFT_FIELD_NAMES`,
+    :data:`DRIFT_ENDTAG_NAMES` and :data:`WEIGHT_FIELD_NAMES`, so if a
+    directory somehow holds both spellings the explicitly-3D name wins. That
+    precedence only guards against ambiguity.
 
     Names are matched exactly, never globbed: ``drift*.npz`` would wrongly
     match ``drift_insulator.npz`` in ``initial/`` and ``drift3d_endtag.npz``
-    in ``paths/``.
+    in ``paths/``, and ``weight*.npz`` would catch ``weight_insulator.npz``.
     """
     try:
-        candidates = _DRIFT_KINDS[kind]
+        kinds = _FIELD_KINDS[field]
     except KeyError:
         raise ValueError(
-            f"unknown drift kind {kind!r}, expected one of {sorted(_DRIFT_KINDS)}"
+            f"unknown field {field!r}, expected one of {sorted(_FIELD_KINDS)}"
+        ) from None
+
+    try:
+        candidates = kinds[kind]
+    except KeyError:
+        raise ValueError(
+            f"unknown {field} kind {kind!r}, expected one of {sorted(kinds)}"
         ) from None
 
     directory = Path(root) / subdir
@@ -78,9 +97,14 @@ def find_drift(root: str | Path, subdir: str, kind: str = "field") -> Path:
 
     present = sorted(p.name for p in directory.glob("*.npz"))
     raise FileNotFoundError(
-        f"no {kind} drift array in {directory}: tried {list(candidates)}, "
+        f"no {kind} {field} array in {directory}: tried {list(candidates)}, "
         f"found {present}"
     )
+
+
+def find_drift(root: str | Path, subdir: str, kind: str = "field") -> Path:
+    """Resolve the drift array in ``root/subdir``. See :func:`find_field`."""
+    return find_field(root, subdir, field="drift", kind=kind)
 
 
 def find_dataset(root: str | Path, rel: str) -> Path:
