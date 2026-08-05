@@ -7,6 +7,8 @@ quads that cover exactly the same nodes.
 
 import numpy as np
 
+from .grid import Grid
+
 
 def mask_layers(mask: np.ndarray) -> list[tuple[int, np.ndarray]]:
     """Return ``(z_index, layer)`` for every z-layer holding any True node."""
@@ -53,3 +55,63 @@ def layer_rects(layer2d: np.ndarray) -> list[tuple[int, int, int, int]]:
         rects.append((i0, j0, n_rows, j1))
 
     return sorted(rects)
+
+
+def _group_names(count: int) -> list[str]:
+    """Names for `count` slabs ordered by ascending z."""
+    # display label, not a physics claim
+    if count == 1:
+        return ["anode"]
+    middles = [
+        "grid" if n == 0 else f"grid-{n + 1}" for n in range(max(count - 2, 0))
+    ]
+    return ["anode"] + middles + ["cathode"]
+
+
+def boundary_groups(mask: np.ndarray, grid: Grid) -> list[dict]:
+    """Collapse the mask into named mm-space slabs for the viewer.
+
+    Consecutive z-layers with array-equal 2D masks become one slab, given a
+    thickness of one node along z so it is visible edge-on.
+    """
+    layers = mask_layers(mask)
+
+    runs: list[list[tuple[int, np.ndarray]]] = []
+    for z, layer in layers:
+        prev = runs[-1][-1] if runs else None
+        if prev is not None and z == prev[0] + 1 and np.array_equal(layer, prev[1]):
+            runs[-1].append((z, layer))
+        else:
+            runs.append([(z, layer)])
+
+    ox, oy, _ = grid.origin
+    sx, sy, sz = grid.spacing
+
+    groups = []
+    for run in runs:
+        z_first, layer = run[0]
+        z_last = run[-1][0]
+        groups.append(
+            {
+                "z_min_mm": grid.index_to_mm((0, 0, z_first))[2],
+                "z_max_mm": grid.origin[2] + (z_last + 1) * sz,
+                "quads": [
+                    [ox + i0 * sx, oy + j0 * sy, ox + i1 * sx, oy + j1 * sy]
+                    for i0, j0, i1, j1 in layer_rects(layer)
+                ],
+            }
+        )
+
+    groups.sort(key=lambda g: g["z_min_mm"])
+    for name, group in zip(_group_names(len(groups)), groups):
+        group["name"] = name
+
+    return [
+        {
+            "name": g["name"],
+            "z_min_mm": g["z_min_mm"],
+            "z_max_mm": g["z_max_mm"],
+            "quads": g["quads"],
+        }
+        for g in groups
+    ]
