@@ -42,3 +42,25 @@ def decimate(path: np.ndarray, max_points: int = 400) -> np.ndarray:
 
     idx = np.unique(np.linspace(0, len(path) - 1, max_points).round().astype(int))
     return path[idx]
+
+
+def path_summaries(paths: np.ndarray, endtags: np.ndarray) -> list[dict]:
+    """One JSON-ready record per path, for the viewer's hover readout.
+
+    Avoids shipping the per-path arrays a second time.
+    """
+    summaries = []
+    for i, raw in enumerate(paths):
+        trimmed = trim_stagnant(raw)
+        start, end = trimmed[0], trimmed[-1]
+        summaries.append(
+            {
+                "id": int(i),
+                "start": [float(v) for v in start],
+                "end": [float(v) for v in end],
+                "n_steps": int(len(trimmed)),
+                "z_travel": float(start[2] - end[2]),
+                "endtag": float(endtags[i]),
+            }
+        )
+    return summaries
