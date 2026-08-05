@@ -118,6 +118,7 @@ def write_potential(
     zmax: int | None = None,
     zstride: int | None = None,
     field: str = "drift",
+    basename: str | None = None,
 ) -> dict:
     """Write ``potential.bin`` and ``potential.json`` into `dest_dir`.
 
@@ -139,8 +140,12 @@ def write_potential(
     )
 
     # Drift keeps the Phase 8 names; other fields are suffixed so the two
-    # payloads can live side by side in one web/data directory.
-    stem = "potential" if field == "drift" else f"potential_{field}"
+    # payloads can live side by side in one web/data directory. An explicit
+    # basename overrides both.
+    if basename:
+        stem = basename
+    else:
+        stem = "potential" if field == "drift" else f"potential_{field}"
     binary = dest_dir / f"{stem}.bin"
     binary.write_bytes(volume.tobytes())
 

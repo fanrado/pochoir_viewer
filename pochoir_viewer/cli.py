@@ -76,6 +76,11 @@ def _add_export_potential_parser(subparsers) -> None:
         default=None,
         help="comma-separated levels; defaults per field",
     )
+    p.add_argument(
+        "--basename",
+        default=None,
+        help="output stem, overriding the per-field default",
+    )
 
 
 def _int_list(text: str) -> list[int]:
@@ -135,6 +140,7 @@ def _export_potential(args) -> int:
         zmax=zmax,
         zstride=args.zstride,
         field=field,
+        basename=args.basename,
     )
 
     print(f"source {source}")
@@ -161,8 +167,10 @@ def _export_potential(args) -> int:
             # "0.000%", which reads as exactly nothing.
             f"discarded {share * 100:.3g}% of the total magnitude"
         )
+    dest = Path(args.dest_dir)
+    stem = Path(meta["bin"]).stem
     print(
-        f"wrote {Path(args.dest_dir) / meta['bin']} "
+        f"wrote {dest / meta['bin']} and {dest / f'{stem}.json'} "
         f"({meta['bytes'] / 1e6:.1f} MB, shape {meta['shape']}, "
         f"units {meta['units'] or 'dimensionless'})"
     )
