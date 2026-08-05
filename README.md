@@ -232,17 +232,24 @@ to hand a browser. `--field weight` therefore defaults to `--stride 2,2,1` and
 That crop is lossless in practice, and the numbers are measured rather than
 assumed:
 
-| beyond z index | largest remaining \|value\| |
-| --- | --- |
-| 265 | below 1e-3 |
-| 300 (the default crop) | 5.2e-4 |
-| 600 | 1.4e-7 |
+| beyond z index | largest remaining \|value\| | share of total \|value\| discarded |
+| --- | --- | --- |
+| 265 | 1.0e-3 | 1.46% |
+| 300 (the default crop) | 5.2e-4 | 0.76% |
+| 400 | 6.3e-5 | 0.08% |
+| 600 | 1.4e-7 | 0.0001% |
 
 The field decays smoothly rather than terminating: it is not *exactly* zero
 until z = 1599. So the crop does discard signal, but at the default it discards
 nothing larger than 5.2e-4 out of a 0..1 range. Both `--stride` and `--zmax`
 override the defaults if you want the full volume, and every run prints the crop
 together with the largest value it dropped.
+
+The second column is the one to weigh if you are computing induced charge rather
+than looking at the field: that integrates the weighting potential, so what
+matters is the fraction of the total discarded, not the largest single value. At
+the default crop that is 0.76%; `--zmax 600` brings it to 0.0001% for a
+correspondingly larger payload.
 
 ### What is different in the weighting view
 
