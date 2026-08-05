@@ -109,13 +109,53 @@ def _float_list(text: str) -> list[float]:
         ) from None
 
 
-#: Per-field defaults. The weighting potential is 310 MB at full resolution, so
-#: it is strided and cropped to be shippable. The crop is lossy: at this z 300
-#: default the largest discarded value is 5.2e-4 out of a 0..1 range and 0.76%
-#: of the total magnitude is dropped. Every run prints both figures; see the
-#: crop table in README.md for other depths.
-_WEIGHT_STRIDE = (2, 2, 1)
-_WEIGHT_ZMAX = 300
+#: Per-field defaults for the weighting potential.
+#:
+#: The full volume is 310 MB, too large to ship, so it is STRIDED rather than
+#: cropped: the field carries real structure all the way out to 159.8 mm, and a
+#: z crop throws that away. At stride 2 the 3.1 mm pad-to-grid gap still gets 16
+#: z samples and the payload is 38.8 MB. Pass --zmax to crop anyway; the run
+#: then prints exactly what that discards.
+_WEIGHT_STRIDE = (2, 2, 2)
+_WEIGHT_ZMAX = None
+
+
+def _report_z_range(arr, zmax, sz: float) -> None:
+    """State the z coverage honestly — never call a crop lossless.
+
+    The weighting potential decays over dozens of orders of magnitude but stays
+    nonzero almost to the cathode, so a crop discards real structure. Say what
+    is kept, or what is thrown away.
+    """
+    nonzero = np.flatnonzero(np.abs(arr).max(axis=(0, 1)) > 0)
+    last = int(nonzero[-1]) if nonzero.size else 0
+    positive = arr[arr > 0]
+
+    if zmax is None or zmax >= arr.shape[2]:
+        tail = f"full z range kept; field is nonzero out to {last * sz:.1f} mm"
+        if positive.size:
+            smallest = float(positive.min())
+            decades = np.log10(float(np.abs(arr).max()) / smallest)
+            tail += f", min positive {smallest:.3g} ({decades:.1f} decades)"
+        print(tail)
+        return
+
+    def abs_sum(a: np.ndarray) -> float:
+        return float(sum(np.abs(a[:, :, k]).sum() for k in range(a.shape[2])))
+
+    dropped = arr[:, :, zmax:]
+    beyond = float(np.abs(dropped).max())
+    total = abs_sum(arr)
+    share = abs_sum(dropped) / total if total else 0.0
+    print(
+        f"cropped at z={zmax} ({zmax * sz:.1f} mm), DISCARDING the field from "
+        f"there to {last * sz:.1f} mm where it is still nonzero; "
+        f"largest discarded value {beyond:.3g}; "
+        # Three significant figures rather than three decimals: the share spans
+        # orders of magnitude, and a fixed-decimal 0.0001% prints as "0.000%",
+        # which reads as exactly nothing.
+        f"discarded {share * 100:.3g}% of the total magnitude"
+    )
 
 
 def _export_potential(args) -> int:
@@ -148,28 +188,8 @@ def _export_potential(args) -> int:
 
     print(f"source {source}")
     print(f"field {field}, stride {list(meta.get('stride', [1, 1, meta['zstride']]))}")
-    if zmax is not None and zmax < arr.shape[2]:
-        # State what was dropped and why, so nobody has to wonder. Both metrics
-        # are reported because they can disagree by orders of magnitude: the max
-        # says how wrong any single voxel can be, while the share says how much
-        # of the integral is gone, and induced charge integrates this field.
-        # Accumulated a slab at a time: the weighting array is 620 MB as
-        # float64, and np.abs over the whole thing would double that.
-        def abs_sum(a: np.ndarray) -> float:
-            return float(sum(np.abs(a[:, :, k]).sum() for k in range(a.shape[2])))
+    _report_z_range(arr, zmax, grid.spacing[2])
 
-        dropped = arr[:, :, zmax:]
-        beyond = float(np.abs(dropped).max())
-        total = abs_sum(arr)
-        share = abs_sum(dropped) / total if total else 0.0
-        print(
-            f"cropped at z={zmax} ({zmax * grid.spacing[2]:.1f} mm); "
-            f"per-plane max beyond z={zmax} is {beyond:.3g}; "
-            # Three significant figures rather than three decimals: the share
-            # spans orders of magnitude, and a fixed-decimal 0.0001% prints as
-            # "0.000%", which reads as exactly nothing.
-            f"discarded {share * 100:.3g}% of the total magnitude"
-        )
     dest = Path(args.dest_dir)
     stem = Path(meta["bin"]).stem
     print(
