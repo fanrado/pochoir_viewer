@@ -365,3 +365,80 @@ data, leaving the other 99% as one flat region. That is why the weighting levels
 are log-ish instead: they reveal structure that linear spacing collapses. If you
 compare against a `plt.contour` reference and the lines look sparse, this skew is
 the reason, not a bug.
+
+## Seeing the whole weighting field
+
+### The full-depth default
+
+`--field weight` now exports the **entire z range** at `--stride 2,2,2`:
+
+| stride | z range | shape | size |
+| --- | --- | --- | --- |
+| `1,1,1` | full | 220 x 220 x 1601 | 310 MB — too large to ship |
+| **`2,2,2`** | **full** | **110 x 110 x 801** | **38.8 MB — the default** |
+| `2,2,4` | full | 110 x 110 x 401 | 19.4 MB |
+| `2,2,1` + `--zmax 300` | 0–30 mm | 110 x 110 x 300 | 14.5 MB |
+
+At 0.2 mm z sampling the 3.1 mm pad-to-grid gap still gets 16 samples, which is
+why stride 2 is acceptable. Trade size against resolution with `--stride`, and
+crop with `--zmax` if you only care about the pad region.
+
+### The corrected physics
+
+**An earlier assumption in this project — that the weighting potential is
+essentially zero beyond about 60 mm — was wrong.** The field is nonzero out to
+**159.8 mm**, almost the full drift length. Its smallest positive value is
+**3.4e-40**, so the volume spans about **39.5 orders of magnitude**.
+
+That is why the old `--zmax 300` default was replaced: it silently discarded
+real structure from 30 mm out to 159.8 mm. If you do crop, the export tells you
+exactly what went with it — largest discarded value and the share of total
+magnitude. No crop of this field is lossless, and the tool no longer claims
+otherwise.
+
+### Why log scaling is required, not a preference
+
+Spread 39.5 decades across a linear colour ramp and everything outside the pad
+region collapses into a single flat colour. That is arithmetic, not a viewer
+defect: past 60 mm the values run from 1.4e-7 down to 3.5e-40, which is
+indistinguishable from zero on a 0..1 linear scale.
+
+Concretely, with 200 contour levels over the weighting volume:
+
+| spacing | levels landing in the range past 60 mm |
+| --- | --- |
+| linear | **0** |
+| log | **28** |
+
+So the weighting field defaults to **log** colour scaling and log-spaced
+contours. Drift defaults to linear.
+
+**Log is unavailable for the drift potential**, and its toggle is disabled with
+a tooltip explaining why: drift runs -9500..0 V, and the logarithm of a negative
+number is undefined. The viewer refuses rather than painting nonsense.
+
+### Levels and decades
+
+The **levels** slider runs 100 to 5000. It recomputes on **release, not during
+the drag** — deliberately, because the cost is real:
+
+| levels | segments | time |
+| --- | --- | --- |
+| 200 | ~71,000 | ~0.08 s |
+| 1000 | ~356,000 | ~0.36 s |
+| 5000 | ~1,780,000 | ~1.6 s |
+
+A status line reports the segment count and elapsed time after each rebuild, so
+a slow setting explains itself. Per-level checkboxes appear up to 24 levels;
+past that the panel just states the count, since 5000 checkboxes would be
+useless.
+
+The **decades** slider sets how far below the maximum the colour ramp reaches:
+at 8 decades the floor is `1e-8 x max`, and anything at or below it takes the
+ramp's first colour. Exact zeros land there too.
+
+**A caveat on the deep tail.** Below roughly **1e-12** these values are
+numerical residue from the relaxation solver, not physics. The 8-decade default
+covers everything physically meaningful. Pushing the slider to 20 decades will
+show solver noise — the control reaches that far because seeing the whole field
+was the explicit ask, not because 20 decades is a sensible analysis setting.
