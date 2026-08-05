@@ -17,6 +17,7 @@ import { createViewCube, enableViewCubePicking } from "./viewcube.js";
 import {
   buildIsoSurfaces,
   createColorbar,
+  createContourView,
   createSliceView,
   fetchPotential,
   uvToVoxel,
@@ -61,22 +62,36 @@ boundaryGroup.name = "boundaryGroup";
 
 const groupsPanel = document.getElementById("groups");
 
-scene_data.boundary.forEach((group, index) => {
-  const mesh = buildBoundaryMesh(group, index);
-  boundaryGroup.add(mesh);
+/** Rebuild the boundary meshes and their checkboxes for a scene payload. */
+function rebuildBoundary(sceneData) {
+  for (const mesh of [...boundaryGroup.children]) {
+    mesh.geometry.dispose();
+    mesh.material.dispose();
+    boundaryGroup.remove(mesh);
+  }
+  groupsPanel.replaceChildren();
 
-  const label = document.createElement("label");
-  const box = document.createElement("input");
-  box.type = "checkbox";
-  box.checked = true;
-  box.addEventListener("change", () => { mesh.visible = box.checked; });
-  label.append(box, ` ${group.name} (z ${group.z_min_mm}–${group.z_max_mm} mm)`);
-  groupsPanel.append(label);
-});
+  sceneData.boundary.forEach((group, index) => {
+    const mesh = buildBoundaryMesh(group, index);
+    boundaryGroup.add(mesh);
+
+    const label = document.createElement("label");
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = true;
+    box.addEventListener("change", () => { mesh.visible = box.checked; });
+    label.append(box, ` ${group.name} (z ${group.z_min_mm}–${group.z_max_mm} mm)`);
+    groupsPanel.append(label);
+  });
+}
+
+rebuildBoundary(scene_data);
 
 sceneRoot.add(boundaryGroup);
 
-const EXTENT_Z = scene_data.meta.extent_mm[2];
+// Mutable: the weighting domain is 22.0 mm across, the drift one 4.4 mm.
+let extentMm = [...scene_data.meta.extent_mm];
+const EXTENT_Z = extentMm[2];
 
 const { linePositions, lineColors, pathRanges, vertexTotal } = buildPathBuffers(
   scene_data.paths,
@@ -106,7 +121,6 @@ pathGeometry.setDrawRange(0, offsetOfPath(Number(npathsInput.value)));
 // The domain is 36:1 (160.1 mm drift vs 4.4 mm transverse) and unviewable at
 // true scale, but compressing z misrepresents drift angles — so whatever
 // scaling is applied is always stated on screen and undone in one click.
-const [EXTENT_X, EXTENT_Y] = scene_data.meta.extent_mm;
 const zscaleInput = document.getElementById("zscale");
 const scaleNote = document.getElementById("scale-note");
 
@@ -118,7 +132,7 @@ function currentFactor() {
 
 /** The box as displayed, i.e. with z divided by the current factor. */
 function displayedExtent() {
-  return [EXTENT_X, EXTENT_Y, EXTENT_Z / currentFactor()];
+  return [extentMm[0], extentMm[1], extentMm[2] / currentFactor()];
 }
 
 function frameView() {
@@ -137,7 +151,7 @@ function frameView() {
 
 function updateScaleNote() {
   const factor = currentFactor();
-  const trueDims = `${fmt(EXTENT_X)} x ${fmt(EXTENT_Y)} x ${fmt(EXTENT_Z)} mm`;
+  const trueDims = `${fmt(extentMm[0])} x ${fmt(extentMm[1])} x ${fmt(extentMm[2])} mm`;
   if (factor === 1) {
     scaleNote.textContent = `z x1 (true scale) - ${trueDims}`;
     return;
@@ -268,29 +282,150 @@ const potentialControls = document.getElementById("potential-controls");
 const voltReadout = document.getElementById("volt-readout");
 let sliceView = null;
 let sliceControls = null;
+let contourView = null;
 let potentialVolume = null;
 let potentialMeta = null;
 let colorbar = null;
 
-try {
-  const { meta, volume } = await fetchPotential();
-  sliceView = createSliceView(meta, volume, sceneRoot);
-  sliceControls = wireSliceControls(sliceView);
-  potentialVolume = volume;
+/** Payload URLs per field. Drift keeps the Phase 8 names. */
+const FIELD_FILES = {
+  drift: { scene: "data/scene.json", potential: "potential.json" },
+  weight: { scene: "data/scene_weight.json", potential: "potential_weight.json" },
+};
+
+// Each URL is fetched at most once per page load.
+const sceneCache = { drift: scene_data };
+const potentialCache = {};
+
+async function loadScene(field) {
+  if (!sceneCache[field]) {
+    const response = await fetch(FIELD_FILES[field].scene);
+    if (!response.ok) {
+      throw new Error(`${FIELD_FILES[field].scene}: HTTP ${response.status}`);
+    }
+    sceneCache[field] = await response.json();
+  }
+  return sceneCache[field];
+}
+
+async function loadPotential(field) {
+  potentialCache[field] ??= await fetchPotential("data", FIELD_FILES[field].potential);
+  return potentialCache[field];
+}
+
+/** Tear down the previous field's potential objects before building the next. */
+function disposePotential() {
+  for (const object of [sliceView?.mesh, contourView?.group].filter(Boolean)) {
+    object.parent?.remove(object);
+    object.traverse?.((child) => {
+      child.geometry?.dispose();
+      child.material?.dispose();
+    });
+  }
+  for (const mesh of [...isoGroup.children]) {
+    mesh.geometry.dispose();
+    mesh.material.dispose();
+    isoGroup.remove(mesh);
+  }
+  document.getElementById("iso-levels").replaceChildren();
+  document.getElementById("contour-levels").replaceChildren();
+  document.getElementById("contour-legend").replaceChildren();
+  sliceView = null;
+  sliceControls = null;
+  contourView = null;
+}
+
+/** Build the slice, colorbar, isosurfaces and contours for one field. */
+function buildPotential(meta, volume) {
   potentialMeta = meta;
+  potentialVolume = volume;
+  sliceView = createSliceView(meta, volume, sceneRoot);
+  contourView = createContourView(meta, volume, sceneRoot);
+  sliceControls = wireSliceControls(sliceView, document, (axis, index) =>
+    contourView.update(axis, index),
+  );
   colorbar = createColorbar(meta);
   buildIsoSurfaces(meta, isoGroup, document.getElementById("iso-levels"));
+
+  // Honour whatever the layer buttons currently say.
+  sliceView.mesh.visible = pressed("layer-slice");
+  contourView.group.visible = pressed("layer-contours");
+}
+
+function pressed(id) {
+  return document.getElementById(id).getAttribute("aria-pressed") === "true";
+}
+
+function disable(id, title) {
+  const button = document.getElementById(id);
+  button.disabled = true;
+  button.title = title;
+}
+
+let currentField = "drift";
+
+/**
+ * Swap every field-dependent object.
+ *
+ * The two domains differ — 4.4 x 4.4 x 160.1 mm for drift against
+ * 22.0 x 22.0 x 160.1 mm for weight — so the camera is refitted and the scale
+ * note recomputed from the new extent; stale framing would leave the geometry
+ * off-screen and a stale note would state the wrong size.
+ */
+async function selectField(field) {
+  const sceneData = await loadScene(field);
+
+  disposePotential();
+  rebuildBoundary(sceneData);
+  extentMm = [...sceneData.meta.extent_mm];
+
+  // The weighting domain has no drift paths.
+  const hasPaths = (sceneData.meta.n_paths ?? 0) > 0;
+  const pathsButton = document.getElementById("layer-paths");
+  pathsButton.disabled = !hasPaths;
+  pathsButton.title = hasPaths ? "" : "no drift paths in the weighting domain";
+  pathLines.visible = hasPaths && pressed("layer-paths");
+
+  try {
+    const { meta, volume } = await loadPotential(field);
+    buildPotential(meta, volume);
+  } catch (error) {
+    console.warn(
+      `potential layers unavailable for ${field} (${error.message}); ` +
+        "run: python -m pochoir_viewer export-potential",
+    );
+    for (const id of ["layer-slice", "layer-iso"]) {
+      disable(id, "run: python -m pochoir_viewer export-potential");
+    }
+  }
+
+  currentField = field;
+  applyScale(); // recomputes #scale-note from the new extent
+  frameView();
+}
+
+// Probe the weighting payload once so its selector can be disabled up front
+// rather than failing on first click.
+try {
+  await loadScene("weight");
 } catch (error) {
   console.warn(
-    `potential layers unavailable (${error.message}); ` +
-      "run: python -m pochoir_viewer export-potential",
+    `weighting field unavailable (${error.message}); run: ` +
+      "python -m pochoir_viewer export --field weight and export-potential --field weight",
   );
-  for (const id of ["layer-slice", "layer-iso"]) {
-    const button = document.getElementById(id);
-    button.disabled = true;
-    button.title = "run: python -m pochoir_viewer export-potential";
-  }
+  disable(
+    "field-weight",
+    "run: python -m pochoir_viewer export --field weight and export-potential --field weight",
+  );
 }
+
+for (const field of ["drift", "weight"]) {
+  document.getElementById(`field-${field}`).addEventListener("change", (event) => {
+    if (event.target.checked) selectField(field);
+  });
+}
+
+await selectField("drift");
 
 // --- layer toggles --------------------------------------------------------
 

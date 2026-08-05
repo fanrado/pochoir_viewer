@@ -201,7 +201,7 @@ export function createColorbar(meta, doc = globalThis.document) {
  * On axis change the slider range is rebuilt from the volume shape and the
  * current index clamped, so a tall z range cannot leave a stale index behind.
  */
-export function wireSliceControls(view, doc = globalThis.document) {
+export function wireSliceControls(view, doc = globalThis.document, onRender = null) {
   const slider = doc.getElementById("slice-idx");
   const label = doc.getElementById("slice-label");
   const radios = {
@@ -215,6 +215,7 @@ export function wireSliceControls(view, doc = globalThis.document) {
   function render(index) {
     view.updateSlice(axis, index);
     if (label) label.textContent = sliceLabel(axis, index, view.meta);
+    onRender?.(axis, index);
   }
 
   function setAxis(next) {
