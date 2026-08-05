@@ -140,11 +140,26 @@ def _export_potential(args) -> int:
     print(f"source {source}")
     print(f"field {field}, stride {list(meta.get('stride', [1, 1, meta['zstride']]))}")
     if zmax is not None and zmax < arr.shape[2]:
-        # State what was dropped and why, so nobody has to wonder.
-        beyond = float(np.abs(arr[:, :, zmax:]).max())
+        # State what was dropped and why, so nobody has to wonder. Both metrics
+        # are reported because they can disagree by orders of magnitude: the max
+        # says how wrong any single voxel can be, while the share says how much
+        # of the integral is gone, and induced charge integrates this field.
+        # Accumulated a slab at a time: the weighting array is 620 MB as
+        # float64, and np.abs over the whole thing would double that.
+        def abs_sum(a: np.ndarray) -> float:
+            return float(sum(np.abs(a[:, :, k]).sum() for k in range(a.shape[2])))
+
+        dropped = arr[:, :, zmax:]
+        beyond = float(np.abs(dropped).max())
+        total = abs_sum(arr)
+        share = abs_sum(dropped) / total if total else 0.0
         print(
             f"cropped at z={zmax} ({zmax * grid.spacing[2]:.1f} mm); "
-            f"per-plane max beyond z={zmax} is {beyond:.3g}"
+            f"per-plane max beyond z={zmax} is {beyond:.3g}; "
+            # Three significant figures rather than three decimals: the share
+            # spans orders of magnitude, and a fixed-decimal 0.0001% prints as
+            # "0.000%", which reads as exactly nothing.
+            f"discarded {share * 100:.3g}% of the total magnitude"
         )
     print(
         f"wrote {Path(args.dest_dir) / meta['bin']} "
