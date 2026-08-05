@@ -11,6 +11,10 @@ import numpy as np
 from .io import find_drift, load_npz
 
 
+#: Equipotential levels drawn by default, in volts.
+DEFAULT_LEVELS = (-500.0, -2000.0, -4000.0, -6000.0, -8000.0)
+
+
 def load_potential(root: str | Path) -> np.ndarray:
     """Load the drift potential array for a dataset root."""
     _, potential = load_npz(find_drift(root, "potential", "field"))
@@ -35,3 +39,60 @@ def volume_float32(
 
     volume = np.ascontiguousarray(arr[:, :, ::zstride], dtype=np.float32)
     return volume, volume.shape
+
+
+def isosurfaces(
+    arr: np.ndarray,
+    grid,
+    levels=DEFAULT_LEVELS,
+    zstride: int = 1,
+) -> tuple[list[dict], list[float]]:
+    """Triangulate equipotential surfaces, returning ``(surfaces, skipped)``.
+
+    Precomputing the meshes here keeps marching cubes out of the browser. The
+    field is a smooth monotonic ramp, so each level comes back as a near-planar
+    sheet and the payload stays small.
+
+    Note that -2000 V coincides with the grid boundary plane at z index 131, so
+    that surface is expected to sit flush with the grid geometry rather than
+    floating in the drift volume.
+
+    Levels outside the open interval ``(vmin, vmax)`` cannot be triangulated;
+    they are skipped and reported instead of raising.
+    """
+    from skimage import measure  # lazy: only isosurfaces needs scikit-image
+
+    volume, _ = volume_float32(arr, zstride)
+    vmin = float(np.min(volume))
+    vmax = float(np.max(volume))
+    sx, sy, sz = grid.spacing
+
+    surfaces: list[dict] = []
+    skipped: list[float] = []
+
+    for level in levels:
+        level = float(level)
+        if not vmin < level < vmax:
+            skipped.append(level)
+            continue
+
+        verts, faces, _normals, _values = measure.marching_cubes(volume, level=level)
+
+        # Vertices come back in the INDEX SPACE OF THE STRIDED VOLUME, so the
+        # z index must be multiplied by zstride before scaling to mm —
+        # otherwise every surface collapses toward the anode.
+        mm = np.empty_like(verts)
+        mm[:, 0] = verts[:, 0] * sx
+        mm[:, 1] = verts[:, 1] * sy
+        mm[:, 2] = verts[:, 2] * zstride * sz
+
+        surfaces.append(
+            {
+                "level": level,
+                "positions": [round(float(v), 4) for v in mm.ravel()],
+                "indices": [int(i) for i in faces.ravel()],
+                "n_tris": int(len(faces)),
+            }
+        )
+
+    return surfaces, skipped
