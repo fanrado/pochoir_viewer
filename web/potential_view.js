@@ -20,10 +20,10 @@ import {
  * Returns null when it is absent or unusable — the potential export is opt-in,
  * so a missing payload is a normal state, not an error.
  */
-export async function fetchPotential(base = "data") {
-  const metaResponse = await fetch(`${base}/potential.json`);
+export async function fetchPotential(base = "data", name = "potential.json") {
+  const metaResponse = await fetch(`${base}/${name}`);
   if (!metaResponse.ok) {
-    throw new Error(`${base}/potential.json: HTTP ${metaResponse.status}`);
+    throw new Error(`${base}/${name}: HTTP ${metaResponse.status}`);
   }
   const meta = await metaResponse.json();
 
@@ -152,10 +152,14 @@ export function createColorbar(meta, doc = globalThis.document) {
   const ctx = canvas?.getContext("2d");
   const { width, height } = canvas ?? { width: 0, height: 0 };
 
+  // Units follow the field: volts for drift, a bare ratio for weighting.
+  // Absent units means the Phase 8 drift wire format, which was always volts.
+  const volts = (meta.units ?? "V") === "V";
+  const tag = (v) => (volts ? `${v.toFixed(0)} V` : `${v}`);
   const maxLabel = doc.getElementById("colorbar-max");
   const minLabel = doc.getElementById("colorbar-min");
-  if (maxLabel) maxLabel.textContent = `${meta.vmax.toFixed(0)} V`;
-  if (minLabel) minLabel.textContent = `${meta.vmin.toFixed(0)} V`;
+  if (maxLabel) maxLabel.textContent = tag(meta.vmax);
+  if (minLabel) minLabel.textContent = tag(meta.vmin);
 
   // One ramp sample per row, top = vmax, via the same mapping as the plane.
   const column = new Float32Array(height);
@@ -295,7 +299,7 @@ export function buildIsoSurfaces(meta, group, panel, doc = globalThis.document) 
 
 /** Evenly spaced contour levels across (vmin, vmax), excluding the endpoints. */
 export function defaultContourLevels(meta, step = 1000) {
-  if (meta.units !== "V") return [...WEIGHT_CONTOUR_LEVELS];
+  if ((meta.units ?? "V") !== "V") return [...WEIGHT_CONTOUR_LEVELS];
 
   const levels = [];
   const first = Math.ceil(meta.vmin / step) * step;
@@ -329,7 +333,7 @@ export function createContourView(meta, volume, sceneRoot, doc = globalThis.docu
   const enabled = new Map(levels.map((level) => [level, true]));
   const objects = new Map();
 
-  const unit = meta.units === "V" ? " V" : "";
+  const unit = (meta.units ?? "V") === "V" ? " V" : "";
   const label = (level) => `${level}${unit}`;
 
   function colorFor(level) {
