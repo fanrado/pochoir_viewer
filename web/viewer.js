@@ -6,6 +6,7 @@ import {
   offsetOfPath as offsetOfPathIn,
   pathOfVertex as pathOfVertexIn,
 } from "./scene_build.js";
+import { createPivot, updatePivot } from "./nav.js";
 
 const scene_data = await (await fetch("data/scene.json")).json();
 console.log(scene_data.meta);
@@ -148,6 +149,9 @@ document.getElementById("reset-view").addEventListener("click", frameView);
 applyScale();
 frameView();
 
+// Draw the orbit pivot, so the center of rotation is never a mystery.
+const pivot = createPivot(scene);
+
 // Hover a trajectory to identify it, so the bundle is inspectable rather than
 // decorative.
 const readout = document.getElementById("readout");
@@ -189,6 +193,7 @@ window.addEventListener("resize", () => {
 function animate() {
   requestAnimationFrame(animate);
   controls.update();
+  updatePivot(pivot, camera, controls);
   renderer.render(scene, camera);
 }
 animate();
