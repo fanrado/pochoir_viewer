@@ -223,32 +223,28 @@ python -m pochoir_viewer export-potential --field weight --dest-dir web/data
 The weighting payload is written as `scene_weight.json`, `potential_weight.bin`
 and `potential_weight.json`, so both fields can sit in `web/data` at once.
 
-### Why it is strided and cropped
+### Why it is strided, not cropped
 
-At full float32 resolution the weighting potential is **310 MB** — far too much
-to hand a browser. `--field weight` therefore defaults to `--stride 2,2,1` and
-`--zmax 300`, giving a **14.5 MB** payload.
+At full float32 resolution the weighting potential is **310 MB**, too much to
+hand a browser, so `--field weight` defaults to `--stride 2,2,2` — a **38.8 MB**
+volume plus about 3.7 MB of isosurface meshes, with **no default crop**. See
+[Seeing the whole weighting field](#seeing-the-whole-weighting-field) for the
+size trade-offs and why striding is preferred to cropping.
 
-That crop is lossy, and the numbers are measured rather than assumed:
+If you do crop with `--zmax`, it is lossy, and by more than the largest
+discarded value suggests:
 
 | beyond z index | largest remaining \|value\| | share of total \|value\| discarded |
 | --- | --- | --- |
 | 265 | 1.0e-3 | 1.46% |
-| 300 (the default crop) | 5.2e-4 | 0.76% |
+| 300 | 5.2e-4 | 0.76% |
 | 400 | 6.3e-5 | 0.08% |
 | 600 | 1.4e-7 | 0.0001% |
 
-The field decays smoothly rather than terminating: it is not *exactly* zero
-until z = 1599. So the crop does discard signal, but at the default it discards
-nothing larger than 5.2e-4 out of a 0..1 range. Both `--stride` and `--zmax`
-override the defaults if you want the full volume, and every run prints the crop
-together with the largest value it dropped.
-
 The second column is the one to weigh if you are computing induced charge rather
 than looking at the field: that integrates the weighting potential, so what
-matters is the fraction of the total discarded, not the largest single value. At
-the default crop that is 0.76%; `--zmax 600` brings it to 0.0001% for a
-correspondingly larger payload.
+matters is the fraction of the total discarded, not the largest single value. A
+crop at z 300 discards 0.76% of it; `--zmax 600` discards 0.0001%.
 
 ### What is different in the weighting view
 

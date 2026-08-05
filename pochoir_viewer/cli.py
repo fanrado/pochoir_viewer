@@ -56,13 +56,13 @@ def _add_export_potential_parser(subparsers) -> None:
         "--stride",
         type=_int_list,
         default=None,
-        help="per-axis stride 'sx,sy,sz' (weight default: 2,2,1)",
+        help="per-axis stride 'sx,sy,sz' (weight default: 2,2,2)",
     )
     p.add_argument(
         "--zmax",
         type=int,
         default=None,
-        help="crop z at this index (weight default: 300)",
+        help="crop z at this index (default: no crop; lossy, see README)",
     )
     p.add_argument(
         "--zstride",
