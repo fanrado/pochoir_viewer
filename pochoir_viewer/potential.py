@@ -9,7 +9,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .io import find_drift, load_npz
+from .io import find_field, load_npz
 
 
 #: Equipotential levels drawn by default for the drift field, in volts.
@@ -23,15 +23,23 @@ DEFAULT_LEVELS = (-500.0, -2000.0, -4000.0, -6000.0, -8000.0)
 WEIGHT_LEVELS = (0.9, 0.75, 0.5, 0.25, 0.1, 0.05, 0.01)
 
 
-def load_potential(root: str | Path) -> np.ndarray:
-    """Load the drift potential array for a dataset root."""
-    _, potential = load_npz(find_drift(root, "potential", "field"))
+def load_potential(root: str | Path, field: str = "drift") -> np.ndarray:
+    """Load the potential array for a dataset root."""
+    _, potential = load_npz(find_field(root, "potential", field))
     return potential
 
 
-def potential_stats(arr: np.ndarray) -> dict:
+#: Units per field. The weighting potential is a ratio, not a voltage.
+FIELD_UNITS = {"drift": "V", "weight": "dimensionless"}
+
+
+def potential_stats(arr: np.ndarray, field: str = "drift") -> dict:
     """Value range of `arr`, for the colormap and the colorbar labels."""
-    return {"vmin": float(np.min(arr)), "vmax": float(np.max(arr)), "units": "V"}
+    return {
+        "vmin": float(np.min(arr)),
+        "vmax": float(np.max(arr)),
+        "units": FIELD_UNITS[field],
+    }
 
 
 def volume_float32(
@@ -90,12 +98,20 @@ def volume_float32(
     return volume, volume.shape, meta
 
 
+def default_levels(field: str = "drift"):
+    """Levels appropriate to `field`: volts for drift, ratios for weight."""
+    return DEFAULT_LEVELS if field == "drift" else WEIGHT_LEVELS
+
+
 def write_potential(
     root: str | Path,
     dest_dir: str | Path,
     grid,
-    levels=DEFAULT_LEVELS,
-    zstride: int = 1,
+    levels=None,
+    stride: tuple[int, int, int] = (1, 1, 1),
+    zmax: int | None = None,
+    zstride: int | None = None,
+    field: str = "drift",
 ) -> dict:
     """Write ``potential.bin`` and ``potential.json`` into `dest_dir`.
 
@@ -105,17 +121,26 @@ def write_potential(
     dest_dir = Path(dest_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
-    arr = load_potential(root)
-    volume, shape, _ = volume_float32(arr, zstride=zstride, spacing=grid.spacing)
-    surfaces, skipped = isosurfaces(arr, grid, levels=levels, zstride=zstride)
+    if levels is None:
+        levels = default_levels(field)
+
+    arr = load_potential(root, field)
+    volume, shape, vmeta = volume_float32(
+        arr, stride=stride, zmax=zmax, zstride=zstride, spacing=grid.spacing
+    )
+    surfaces, skipped = isosurfaces(
+        arr, grid, levels=levels, stride=stride, zmax=zmax, zstride=zstride
+    )
 
     binary = dest_dir / "potential.bin"
     binary.write_bytes(volume.tobytes())
 
-    stats = potential_stats(arr)
+    stats = potential_stats(arr, field)
+    effective = vmeta["stride"]
     meta = {
         "shape": [int(n) for n in shape],
-        "zstride": int(zstride),
+        # zstride is kept for the Phase 8 wire format; stride generalizes it.
+        "zstride": int(effective[2]),
         "spacing": [float(s) for s in grid.spacing],
         "origin": [float(o) for o in grid.origin],
         "units": stats["units"],
@@ -126,6 +151,12 @@ def write_potential(
         "isosurfaces": surfaces,
         "skipped_levels": skipped,
     }
+    if field != "drift":
+        # Only the non-default field adds keys, so a drift payload stays
+        # byte-identical to the Phase 8 wire format.
+        meta["field"] = field
+        meta["stride"] = list(effective)
+        meta["zmax"] = zmax
     (dest_dir / "potential.json").write_text(json.dumps(meta))
     return meta
 

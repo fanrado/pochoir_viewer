@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .boundary import boundary_groups
 from .grid import Grid
-from .io import find_drift, load_npz
+from .io import find_drift, find_field, load_npz
 from .paths import decimate, load_paths, path_summaries, trim_stagnant
 
 #: Micron precision, adequate at 0.1 mm node spacing.
@@ -32,13 +32,20 @@ def build_scene(
     root: str | Path,
     spacing: tuple[float, float, float] = (0.1, 0.1, 0.1),
     max_points: int = 400,
+    field: str = "drift",
 ) -> dict:
-    """Build the complete viewer scene for a pochoir output directory."""
+    """Build the complete viewer scene for a pochoir output directory.
+
+    The weighting domain has no drift paths, so `field="weight"` emits an empty
+    paths list and labels its boundary slabs by z position rather than by role.
+    """
     root = Path(root)
 
-    _, mask = load_npz(find_drift(root, "boundary", "field"))
+    _, mask = load_npz(find_field(root, "boundary", field))
     grid = Grid.from_shape(mask.shape, spacing=spacing)
-    paths, endtags = load_paths(root)
+
+    weighting = field != "drift"
+    paths, endtags = ([], []) if weighting else load_paths(root)
 
     boundary = [
         {
@@ -47,7 +54,9 @@ def build_scene(
             "z_max_mm": _round(group["z_max_mm"]),
             "quads": [[_round(v) for v in quad] for quad in group["quads"]],
         }
-        for group in boundary_groups(mask, grid)
+        for group in boundary_groups(
+            mask, grid, naming="index" if weighting else "role"
+        )
     ]
 
     scene_paths = [
@@ -74,13 +83,18 @@ def build_scene(
         for s in path_summaries(paths, endtags)
     ]
 
-    return {
-        "meta": {
+    meta = {
             "source": str(root),
             "grid": _round_meta(grid.to_meta()),
             "extent_mm": [_round(v) for v in grid.extent_mm()],
             "n_paths": len(scene_paths),
-        },
+    }
+    if weighting:
+        # Only the non-default field adds keys, keeping drift byte-identical.
+        meta["field"] = field
+
+    return {
+        "meta": meta,
         "boundary": boundary,
         "paths": scene_paths,
         "summaries": summaries,
