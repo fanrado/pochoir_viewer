@@ -12,17 +12,6 @@ import numpy as np
 from .io import find_field, load_npz
 
 
-#: Equipotential levels drawn by default for the drift field, in volts.
-DEFAULT_LEVELS = (-500.0, -2000.0, -4000.0, -6000.0, -8000.0)
-
-#: Levels for the weighting potential, dimensionless.
-#:
-#: Deliberately log-ish rather than evenly spaced: the weighting potential falls
-#: off fast — 1.0 at the pad, 0.115 at the grid, 0.0025 by z = 150 — so linear
-#: levels would bunch every surface into the first millimetre.
-WEIGHT_LEVELS = (0.9, 0.75, 0.5, 0.25, 0.1, 0.05, 0.01)
-
-
 def load_potential(root: str | Path, field: str = "drift") -> np.ndarray:
     """Load the potential array for a dataset root."""
     _, potential = load_npz(find_field(root, "potential", field))
@@ -104,16 +93,10 @@ def volume_float32(
     return volume, volume.shape, meta
 
 
-def default_levels(field: str = "drift"):
-    """Levels appropriate to `field`: volts for drift, ratios for weight."""
-    return DEFAULT_LEVELS if field == "drift" else WEIGHT_LEVELS
-
-
 def write_potential(
     root: str | Path,
     dest_dir: str | Path,
     grid,
-    levels=None,
     stride: tuple[int, int, int] = (1, 1, 1),
     zmax: int | None = None,
     zstride: int | None = None,
@@ -128,15 +111,9 @@ def write_potential(
     dest_dir = Path(dest_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
-    if levels is None:
-        levels = default_levels(field)
-
     arr = load_potential(root, field)
     volume, shape, vmeta = volume_float32(
         arr, stride=stride, zmax=zmax, zstride=zstride, spacing=grid.spacing
-    )
-    surfaces, skipped = isosurfaces(
-        arr, grid, levels=levels, stride=stride, zmax=zmax, zstride=zstride
     )
 
     # Drift keeps the Phase 8 names; other fields are suffixed so the two
@@ -162,8 +139,6 @@ def write_potential(
         "vmax": stats["vmax"],
         "bin": binary.name,
         "bytes": binary.stat().st_size,
-        "isosurfaces": surfaces,
-        "skipped_levels": skipped,
     }
     if field != "drift":
         # Only the non-default field adds keys, so a drift payload stays
@@ -173,71 +148,3 @@ def write_potential(
         meta["zmax"] = zmax
     (dest_dir / f"{stem}.json").write_text(json.dumps(meta))
     return meta
-
-
-def isosurfaces(
-    arr: np.ndarray,
-    grid,
-    levels=DEFAULT_LEVELS,
-    stride: tuple[int, int, int] = (1, 1, 1),
-    zmax: int | None = None,
-    zstride: int | None = None,
-) -> tuple[list[dict], list[float]]:
-    """Triangulate equipotential surfaces, returning ``(surfaces, skipped)``.
-
-    Precomputing the meshes here keeps marching cubes out of the browser. The
-    field is a smooth monotonic ramp, so each level comes back as a near-planar
-    sheet and the payload stays small.
-
-    Note that -2000 V coincides with the grid boundary plane at z index 131, so
-    that surface is expected to sit flush with the grid geometry rather than
-    floating in the drift volume.
-
-    Levels outside the open interval ``(vmin, vmax)`` cannot be triangulated;
-    they are skipped and reported instead of raising.
-    """
-    from skimage import measure  # lazy: only isosurfaces needs scikit-image
-
-    volume, _, vmeta = volume_float32(
-        arr, stride=stride, zmax=zmax, zstride=zstride
-    )
-    effective = vmeta["stride"]
-    vmin = float(np.min(volume))
-    vmax = float(np.max(volume))
-    sx, sy, sz = grid.spacing
-    ox, oy, oz = grid.origin
-
-    surfaces: list[dict] = []
-    skipped: list[float] = []
-
-    for level in levels:
-        level = float(level)
-        if not vmin < level < vmax:
-            skipped.append(level)
-            continue
-
-        verts, faces, _normals, _values = measure.marching_cubes(volume, level=level)
-
-        # Vertices come back in the INDEX SPACE OF THE STRIDED VOLUME, so each
-        # index must be multiplied by its own stride before scaling to mm —
-        # otherwise every surface collapses toward the origin on that axis.
-        # The z crop is a PREFIX slice (arr[..., :zmax]), so it shifts nothing
-        # and contributes no offset here. Do not add one.
-        # Origin is added on every axis, matching Grid.index_to_mm and
-        # boundary_groups: two index-to-mm conversions that disagree would put
-        # the equipotential sheets off the boundary planes in the same scene.
-        mm = np.empty_like(verts)
-        mm[:, 0] = ox + verts[:, 0] * effective[0] * sx
-        mm[:, 1] = oy + verts[:, 1] * effective[1] * sy
-        mm[:, 2] = oz + verts[:, 2] * effective[2] * sz
-
-        surfaces.append(
-            {
-                "level": level,
-                "positions": [round(float(v), 4) for v in mm.ravel()],
-                "indices": [int(i) for i in faces.ravel()],
-                "n_tris": int(len(faces)),
-            }
-        )
-
-    return surfaces, skipped
