@@ -20,6 +20,12 @@
 
   #scale-note { color: #555; }
 
+  #fields { margin-bottom: 10px; }
+  #field-radios label { display: block; margin-top: 2px; }
+  #contour-controls { margin-top: 8px; border-top: 1px solid #ddd; padding-top: 6px; }
+  #contour-levels label { margin-top: 2px; }
+  #contour-legend { color: #444; }
+
   #layers { margin-bottom: 10px; }
   #layer-buttons { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
   #panel button.layer {
@@ -66,6 +72,14 @@
 <canvas id="view"></canvas>
 
 <div id="panel">
+  <div id="fields">
+    <b>field</b>
+    <div id="field-radios">
+      <label><input type="radio" name="field" id="field-drift" value="drift" checked> Drift field</label>
+      <label><input type="radio" name="field" id="field-weight" value="weight"> Weighting field</label>
+    </div>
+  </div>
+
   <div id="layers">
     <b>view</b>
     <div id="layer-buttons" role="group" aria-label="visible layers">
@@ -78,9 +92,9 @@
 
   <div id="potential-controls" hidden>
     <div id="axis-radios">
-      <label><input type="radio" name="slice-axis" id="axis-x" value="x"> x</label>
-      <label><input type="radio" name="slice-axis" id="axis-y" value="y"> y</label>
-      <label><input type="radio" name="slice-axis" id="axis-z" value="z" checked> z</label>
+      <label><input type="radio" name="slice-axis" id="axis-x" value="x"> yz (x-slice)</label>
+      <label><input type="radio" name="slice-axis" id="axis-y" value="y"> xz (y-slice)</label>
+      <label><input type="radio" name="slice-axis" id="axis-z" value="z" checked> xy (z-slice)</label>
     </div>
     <input type="range" id="slice-idx" min="0" max="0" value="0">
     <span id="slice-label"></span>
@@ -93,6 +107,12 @@
       <span id="volt-readout"></span>
     </div>
     <div id="iso-levels"></div>
+
+    <div id="contour-controls">
+      <button id="layer-contours" class="layer" aria-pressed="false">Contours</button>
+      <div id="contour-levels"></div>
+      <div id="contour-legend"></div>
+    </div>
   </div>
 
   <div id="groups"></div>
