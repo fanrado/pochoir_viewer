@@ -20,6 +20,22 @@
 
   #scale-note { color: #555; }
 
+  #layers { margin-bottom: 10px; }
+  #layer-buttons { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+  #panel button.layer {
+    width: auto; flex: 1 1 auto; margin-top: 0; padding: 3px 6px;
+    background: #e9e9e9; border: 1px solid #bbb; border-radius: 3px; cursor: pointer;
+  }
+  #panel button.layer.active { background: #3f6fd0; border-color: #2d54a4; color: #fff; }
+
+  #potential-controls {
+    margin-bottom: 10px; border-top: 1px solid #ccc; border-bottom: 1px solid #ccc;
+    padding: 8px 0;
+  }
+  #axis-radios label { display: inline-block; margin: 0 6px 0 0; }
+  #colorbar-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+  #colorbar { border: 1px solid #999; }
+
   #shortcuts { margin-top: 12px; border-top: 1px solid #ccc; padding-top: 8px; color: #444; }
   #shortcuts kbd {
     font: 11px monospace; background: #eee; border: 1px solid #bbb;
@@ -45,6 +61,31 @@
 <canvas id="view"></canvas>
 
 <div id="panel">
+  <div id="layers">
+    <b>view</b>
+    <div id="layer-buttons" role="group" aria-label="visible layers">
+      <button id="layer-paths" class="layer active" aria-pressed="true">Drift paths</button>
+      <button id="layer-slice" class="layer" aria-pressed="false">Potential slice</button>
+      <button id="layer-iso" class="layer" aria-pressed="false">Isosurfaces</button>
+      <button id="layer-boundary" class="layer active" aria-pressed="true">Boundary</button>
+    </div>
+  </div>
+
+  <div id="potential-controls" hidden>
+    <div id="axis-radios">
+      <label><input type="radio" name="slice-axis" id="axis-x" value="x"> x</label>
+      <label><input type="radio" name="slice-axis" id="axis-y" value="y"> y</label>
+      <label><input type="radio" name="slice-axis" id="axis-z" value="z" checked> z</label>
+    </div>
+    <input type="range" id="slice-idx" min="0" max="0" value="0">
+    <span id="slice-label"></span>
+    <div id="colorbar-row">
+      <canvas id="colorbar" width="16" height="160"></canvas>
+      <span id="volt-readout"></span>
+    </div>
+    <div id="iso-levels"></div>
+  </div>
+
   <div id="groups"></div>
 
   <label for="npaths">paths shown</label>
