@@ -289,3 +289,79 @@ it traces.
 Note that an xy slice of the *drift* potential is nearly uniform — that field is
 essentially one-dimensional in z — so contours there are sparse or absent by
 nature. The yz and xz planes are where the drift structure is legible.
+
+## Visibility and contour controls
+
+### Payload filenames
+
+The two fields write distinct files, so both can live in `web/data` at once:
+
+| field | files |
+| --- | --- |
+| drift | `scene.json`, `potential.bin`, `potential.json` |
+| weight | `scene_weight.json`, `potential_weight.bin`, `potential_weight.json` |
+
+`--basename` overrides the stem if you want somewhere else:
+
+```bash
+python -m pochoir_viewer export-potential --root ... --dest-dir web/data --field weight --basename wpot
+```
+
+Earlier versions wrote `potential.bin` for **both** fields, so exporting one
+silently destroyed the other and only the last export was present. If you have
+a `web/data` from before that fix, re-run both exports.
+
+### Isosurface appearance
+
+Shell colours come from a fixed bright palette — magenta, orange, yellow,
+green, cyan, blue, violet, running from the innermost (highest) level outwards.
+
+**These deliberately do not match the colorbar.** Tying them to the ramp is what
+the viewer used to do, and it made every shell muddy, because low weighting
+values sit at the dark end of the ramp and the outer shells are exactly the low
+values. The colorbar still governs **the slice image**; the shells get their own
+palette, and the legend carries a swatch per level so a colour is still readable
+as a value. Shells are drawn outermost-first so the nested translucency blends
+correctly where they cross the pad and grid planes.
+
+The **isosurface opacity** slider sets all shells at once. At 100% they switch
+to genuine solid rendering rather than fully-opaque transparency, which would
+otherwise sort incorrectly. The setting survives slice, axis and field changes.
+
+### Slice display modes
+
+| mode | shows |
+| --- | --- |
+| **Image** | the colormap plane only |
+| **Contours** | iso-lines only — the plane is hidden, giving a clean `plt.contour`-style plot |
+| **Both** (default) | image with the contour overlay |
+
+**Contours** hides the textured plane outright rather than fading it, so nothing
+bleeds through from behind. Switching modes never moves the camera or resets the
+contour selection.
+
+Contour levels are currently a fixed set per field: every 1000 V for the drift
+potential, and the log-ish 0.9, 0.75, 0.5, 0.25, 0.1, 0.05, 0.01 for the
+weighting potential. Each level has its own checkbox.
+
+### Why the weighting levels are log-spaced
+
+This is the one result that looks wrong until you see the numbers. The weighting
+potential is *extremely* skewed, and its per-slice range varies enormously:
+
+| xy slice | max | median |
+| --- | --- | --- |
+| z = 101 | 0.954 | 0.000067 |
+| z = 131 | 0.116 | 0.000117 |
+| z = 150 | 0.025 | 0.001107 |
+
+The range spans about **37x** between z = 101 and z = 150, and within a single
+slice the skew is severe: at z = 101 the median is 0.00007 against a maximum of
+0.954, and **89.7% of the cells sit below 1% of that maximum.**
+
+So evenly spaced levels are *faithful* — they are what `plt.contour` draws by
+default — but on this field they put nearly every level inside the top 1% of the
+data, leaving the other 99% as one flat region. That is why the weighting levels
+are log-ish instead: they reveal structure that linear spacing collapses. If you
+compare against a `plt.contour` reference and the lines look sparse, this skew is
+the reason, not a bug.
