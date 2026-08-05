@@ -220,7 +220,12 @@ test("the checkbox labels carry the level and unit", () => {
 });
 
 test("a dimensionless field drops the volt suffix", () => {
-  const { doc } = rig({ units: "dimensionless", vmin: 0, vmax: 1 });
+  // UPDATED for 02bcae3: an unsigned field (vmin >= 0) now DEFAULTS to per-slice
+  // scaling, and that mode replaces the per-level rows with a single note div —
+  // so there are no labels to inspect until we ask for global mode. The
+  // assertion below is unchanged; only the mode it runs in is now explicit.
+  const { doc, view } = rig({ units: "dimensionless", vmin: 0, vmax: 1 });
+  view.setScaling("global");
 
   const texts = doc.created.flatMap((el) => el.children ?? []).filter((c) => typeof c === "string");
   assert.ok(texts.length > 0);
