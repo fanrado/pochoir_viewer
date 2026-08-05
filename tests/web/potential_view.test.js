@@ -1,13 +1,11 @@
-// Tests for web/potential_view.js — slice mesh, colorbar, controls, isosurfaces.
+// Tests for web/potential_view.js — slice mesh, colorbar, controls.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import * as THREE from "three";
 
 import {
-  ISO_PALETTE,
   axisExtent,
-  buildIsoSurfaces,
   createColorbar,
   createSliceView,
   fetchPotential,
@@ -37,8 +35,6 @@ const meta = (over = {}) => ({
   vmax: 0,
   bin: "potential.bin",
   bytes: 4 * 5 * 6 * 4,
-  isosurfaces: [],
-  skipped_levels: [],
   ...over,
 });
 
@@ -530,145 +526,6 @@ test("setAxis is callable directly", () => {
   assert.equal(slider.max, "4");
 });
 
-// --- buildIsoSurfaces -------------------------------------------------------
-
-const SURFACES = [
-  { level: -2000, positions: [0, 0, 0, 1, 0, 0, 0, 1, 0], indices: [0, 1, 2], n_tris: 1 },
-  { level: -6000, positions: [0, 0, 1, 1, 0, 1, 0, 1, 1], indices: [0, 1, 2], n_tris: 1 },
-];
-
-test("one mesh per isosurface, added to the group", () => {
-  const group = new THREE.Group();
-
-  const meshes = buildIsoSurfaces(meta({ isosurfaces: SURFACES }), group, null, fakeDoc());
-
-  assert.equal(meshes.length, 2);
-  assert.equal(group.children.length, 2);
-});
-
-test("meshes are named with their level", () => {
-  const group = new THREE.Group();
-
-  const meshes = buildIsoSurfaces(meta({ isosurfaces: SURFACES }), group, null, fakeDoc());
-
-  assert.equal(meshes[0].name, "iso -2000 V");
-});
-
-test("surface colour comes from the fixed shell palette, not the ramp", () => {
-  // UPDATED for 1567cf4, which deliberately reversed Step 8.13 for the shells:
-  // low weighting values sit at the dark end of the colorbar ramp, so
-  // ramp-derived shells were muddy and indistinguishable. The colorbar still
-  // governs the slice image; see potential_build.test.js for that.
-  const group = new THREE.Group();
-
-  const meshes = buildIsoSurfaces(meta({ isosurfaces: SURFACES }), group, null, fakeDoc());
-
-  const palette = ISO_PALETTE.map((hex) => new THREE.Color(hex).getHex());
-  for (const mesh of meshes) {
-    assert.ok(palette.includes(mesh.material.color.getHex()), mesh.name);
-  }
-  const rampHex = (() => {
-    const [r, g, b] = rampRGB(rampPosition(-2000, -8000, 0));
-    return new THREE.Color(`rgb(${r},${g},${b})`).getHex();
-  })();
-  assert.notEqual(meshes[0].material.color.getHex(), rampHex);
-});
-
-test("deeper levels get a different colour", () => {
-  const group = new THREE.Group();
-
-  const meshes = buildIsoSurfaces(meta({ isosurfaces: SURFACES }), group, null, fakeDoc());
-
-  assert.notEqual(meshes[0].material.color.getHex(), meshes[1].material.color.getHex());
-});
-
-test("surfaces are translucent and double-sided", () => {
-  // UPDATED for 1567cf4: the default opacity moved from 0.3 to 0.35 and is now
-  // a parameter driven by the slider.
-  const group = new THREE.Group();
-
-  const [mesh] = buildIsoSurfaces(meta({ isosurfaces: SURFACES }), group, null, fakeDoc());
-
-  assert.equal(mesh.material.transparent, true);
-  assert.equal(mesh.material.opacity, 0.35);
-  assert.equal(mesh.material.side, THREE.DoubleSide);
-});
-
-test("geometry carries the positions and indices", () => {
-  const group = new THREE.Group();
-
-  const [mesh] = buildIsoSurfaces(meta({ isosurfaces: SURFACES }), group, null, fakeDoc());
-
-  assert.equal(mesh.geometry.getAttribute("position").count, 3);
-  assert.deepEqual([...mesh.geometry.getIndex().array], [0, 1, 2]);
-});
-
-test("vertex normals are computed so the sheets are lit", () => {
-  const group = new THREE.Group();
-
-  const [mesh] = buildIsoSurfaces(meta({ isosurfaces: SURFACES }), group, null, fakeDoc());
-
-  assert.ok(mesh.geometry.getAttribute("normal"));
-});
-
-test("a checkbox per level toggles its mesh", () => {
-  const group = new THREE.Group();
-  const panel = fakeElement();
-  const doc = fakeDoc();
-
-  const meshes = buildIsoSurfaces(meta({ isosurfaces: SURFACES }), group, panel, doc);
-  const box = doc.created.find((el) => el.type === "checkbox");
-  box.checked = false;
-  box.fire("change");
-
-  assert.equal(meshes[0].visible, false);
-});
-
-test("checkboxes start checked", () => {
-  const doc = fakeDoc();
-
-  buildIsoSurfaces(meta({ isosurfaces: SURFACES }), new THREE.Group(), fakeElement(), doc);
-
-  assert.ok(doc.created.filter((el) => el.type === "checkbox").every((el) => el.checked));
-});
-
-test("skipped levels are stated rather than dropped silently", () => {
-  const panel = fakeElement();
-  const doc = fakeDoc();
-
-  buildIsoSurfaces(
-    meta({ isosurfaces: SURFACES, skipped_levels: [-8000] }),
-    new THREE.Group(),
-    panel,
-    doc,
-  );
-
-  const note = doc.created.find((el) => el.className === "iso-skipped");
-  assert.ok(note, "no skipped-levels note was added");
-  assert.match(note.textContent, /-8000 V/);
-});
-
-test("no note is added when nothing was skipped", () => {
-  const doc = fakeDoc();
-
-  buildIsoSurfaces(meta({ isosurfaces: SURFACES }), new THREE.Group(), fakeElement(), doc);
-
-  assert.equal(doc.created.find((el) => el.className === "iso-skipped"), undefined);
-});
-
-test("a missing panel still builds the meshes", () => {
-  const group = new THREE.Group();
-
-  const meshes = buildIsoSurfaces(meta({ isosurfaces: SURFACES }), group, null, fakeDoc());
-
-  assert.equal(meshes.length, 2);
-});
-
-test("absent isosurfaces are treated as none", () => {
-  const bare = { shape: SHAPE, spacing: [1, 1, 1], vmin: -1, vmax: 0 };
-
-  assert.deepEqual(buildIsoSurfaces(bare, new THREE.Group(), null, fakeDoc()), []);
-});
 
 // --- per-field payload names and units --------------------------------------
 
