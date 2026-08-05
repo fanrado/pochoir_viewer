@@ -6,7 +6,7 @@ import {
   offsetOfPath as offsetOfPathIn,
   pathOfVertex as pathOfVertexIn,
 } from "./scene_build.js";
-import { createPivot, updatePivot } from "./nav.js";
+import { createPivot, recenterOn, updatePivot } from "./nav.js";
 
 const scene_data = await (await fetch("data/scene.json")).json();
 console.log(scene_data.meta);
@@ -182,6 +182,20 @@ window.addEventListener("pointermove", (event) => {
   readout.textContent =
     `path ${s.id} - start (${triple(s.start)}) -> end (${triple(s.end)}), ` +
     `dz ${trim(s.z_travel)} mm, ${s.n_steps} steps`;
+});
+
+// The box center is ~75 mm from the anode region worth inspecting, so let the
+// user put the pivot on whatever they double-click.
+canvas.addEventListener("dblclick", (event) => {
+  pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
+  pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+
+  const hits = raycaster.intersectObjects(
+    [pathLines, ...boundaryGroup.children],
+    false,
+  );
+  if (hits.length > 0) recenterOn(hits[0].point, camera, controls);
 });
 
 window.addEventListener("resize", () => {

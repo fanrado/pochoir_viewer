@@ -26,6 +26,37 @@ export function createPivot(scene) {
   return pivot;
 }
 
+const easeOut = (t) => 1 - (1 - t) ** 3;
+
+/**
+ * Glide the orbit pivot to `point` without disturbing the view.
+ *
+ * The camera is translated by the same delta as the target on every frame, so
+ * view direction and camera distance are preserved — only the pivot moves.
+ */
+export function recenterOn(point, camera, controls, ms = 300) {
+  const from = controls.target.clone();
+  const to = point.clone();
+  const cursor = new THREE.Vector3();
+  const delta = new THREE.Vector3();
+  let started = null;
+
+  function step(now) {
+    started ??= now;
+    const t = ms > 0 ? Math.min((now - started) / ms, 1) : 1;
+
+    cursor.lerpVectors(from, to, easeOut(t));
+    delta.subVectors(cursor, controls.target);
+    camera.position.add(delta);
+    controls.target.copy(cursor);
+    controls.update();
+
+    if (t < 1) requestAnimationFrame(step);
+  }
+
+  requestAnimationFrame(step);
+}
+
 /** Park the pivot on controls.target and hold its on-screen size fixed. */
 export function updatePivot(pivot, camera, controls) {
   pivot.position.copy(controls.target);
