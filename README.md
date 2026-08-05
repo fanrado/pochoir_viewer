@@ -39,6 +39,20 @@ python -m pochoir_viewer export --root ... --dest ... --spacing 0.05
 `--spacing` takes one value and applies it to all three axes. `--max-points`
 (default 400) caps how many points per drift path survive decimation.
 
+### Dataset naming
+
+pochoir is inconsistent about how it spells the drift array. It writes
+`drift.npz` under `boundary/`, `domain/`, `increment/` and `initial/`, but
+`drift3d.npz` under `paths/`, `potential/`, `starts/` and `velocity/`. The
+contents are identical.
+
+The viewer accepts either spelling wherever it reads a drift array, so an
+output folder using the other convention works without any flag. If a
+directory somehow contains both, `drift3d.npz` wins as the explicitly-3D name.
+The same tolerance applies to the endtag array (`drift3d_endtag.npz` or
+`drift_endtag.npz`). Names are matched exactly rather than globbed, so
+neighbours like `drift_insulator.npz` are never picked up by mistake.
+
 ## Unused inputs
 
 `initial/`, `domain/`, `increment/` and `starts/` are intentionally ignored —

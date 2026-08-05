@@ -84,7 +84,9 @@ def find_drift(root: str | Path, subdir: str, kind: str = "field") -> Path:
 
 
 def find_dataset(root: str | Path, rel: str) -> Path:
-    """Resolve `rel` (e.g. ``"boundary/drift.npz"``) against `root`.
+    """Resolve `rel` (e.g. ``"boundary/weight.npz"``) against `root`.
+
+    For drift arrays prefer :func:`find_drift`, which tolerates both spellings.
 
     Raises FileNotFoundError listing the available datasets, which is the
     useful thing to see when a name is mistyped.

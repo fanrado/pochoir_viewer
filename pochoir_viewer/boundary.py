@@ -1,8 +1,8 @@
 """Reduction of a 0/1 boundary mask to a small set of rectangles.
 
-boundary/drift.npz marks 7220 True nodes. One voxel each would be unusable in
-the browser, so each occupied z-layer is decomposed into a handful of merged
-quads that cover exactly the same nodes.
+The boundary drift array marks 7220 True nodes in the reference dataset. One
+voxel each would be unusable in the browser, so each occupied z-layer is
+decomposed into a handful of merged quads that cover exactly the same nodes.
 """
 
 import numpy as np
