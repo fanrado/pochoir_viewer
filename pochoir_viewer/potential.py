@@ -28,18 +28,59 @@ def potential_stats(arr: np.ndarray) -> dict:
 
 
 def volume_float32(
-    arr: np.ndarray, zstride: int = 1
-) -> tuple[np.ndarray, tuple[int, int, int]]:
-    """Pack `arr` as a contiguous float32 volume, thinned by `zstride` in z.
+    arr: np.ndarray,
+    stride: tuple[int, int, int] = (1, 1, 1),
+    zmax: int | None = None,
+    zstride: int | None = None,
+    spacing: tuple[float, float, float] | None = None,
+) -> tuple[np.ndarray, tuple[int, int, int], dict]:
+    """Pack `arr` as a contiguous float32 volume, strided and z-cropped.
 
-    The result is C-contiguous so its raw bytes can be written straight to disk
-    and read back as a Float32Array in the browser with no reordering.
+    Returns ``(volume, shape, meta)``. The volume is C-contiguous so its raw
+    bytes can be written straight to disk and read back as a Float32Array in
+    the browser with no reordering.
+
+    The weighting potential is 310 MB at full resolution and numerically zero
+    past z index 265, so a z crop plus transverse stride is lossless in
+    practice. `zmax` beyond the array clamps rather than raising.
+
+    `zstride` is the Phase 8 spelling and maps to ``stride=(1, 1, zstride)``;
+    combining it with an explicit `stride` is contradictory and raises.
+
+    `meta` carries the stride, the crop, and the per-axis mm factors so
+    downstream code never re-derives them. The factors need `spacing`, which is
+    left to the caller rather than defaulted — grid.py owns the 0.1 mm default.
     """
-    if zstride < 1:
-        raise ValueError(f"zstride must be >= 1, got {zstride}")
+    via_zstride = zstride is not None
+    if via_zstride:
+        if tuple(stride) != (1, 1, 1):
+            raise ValueError(
+                f"pass either zstride or stride, not both "
+                f"(got zstride={zstride}, stride={tuple(stride)})"
+            )
+        stride = (1, 1, zstride)
 
-    volume = np.ascontiguousarray(arr[:, :, ::zstride], dtype=np.float32)
-    return volume, volume.shape
+    stride = tuple(int(s) for s in stride)
+    if len(stride) != 3:
+        raise ValueError(f"stride needs three components, got {stride}")
+    if any(s < 1 for s in stride):
+        # Complain in the spelling the caller actually used.
+        if via_zstride:
+            raise ValueError(f"zstride must be >= 1, got {zstride}")
+        raise ValueError(f"every stride component must be >= 1, got {stride}")
+
+    volume = np.ascontiguousarray(
+        arr[:: stride[0], :: stride[1], :zmax : stride[2]], dtype=np.float32
+    )
+
+    meta = {
+        "stride": list(stride),
+        "zmax": zmax,
+        "mm_factors": (
+            None if spacing is None else [stride[k] * spacing[k] for k in range(3)]
+        ),
+    }
+    return volume, volume.shape, meta
 
 
 def write_potential(
@@ -58,7 +99,7 @@ def write_potential(
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     arr = load_potential(root)
-    volume, shape = volume_float32(arr, zstride)
+    volume, shape, _ = volume_float32(arr, zstride=zstride, spacing=grid.spacing)
     surfaces, skipped = isosurfaces(arr, grid, levels=levels, zstride=zstride)
 
     binary = dest_dir / "potential.bin"
@@ -103,7 +144,7 @@ def isosurfaces(
     """
     from skimage import measure  # lazy: only isosurfaces needs scikit-image
 
-    volume, _ = volume_float32(arr, zstride)
+    volume, _, _ = volume_float32(arr, zstride=zstride)
     vmin = float(np.min(volume))
     vmax = float(np.max(volume))
     sx, sy, sz = grid.spacing
