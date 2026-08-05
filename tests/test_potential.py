@@ -125,14 +125,14 @@ def test_stats_of_an_empty_array_raises():
 
 
 def test_volume_is_float32():
-    volume, _ = volume_float32(ramp())
+    volume, _, _ = volume_float32(ramp())
 
     assert volume.dtype == np.float32
 
 
 def test_volume_is_c_contiguous():
     """The browser reads the raw bytes as a Float32Array with no reordering."""
-    volume, _ = volume_float32(ramp())
+    volume, _, _ = volume_float32(ramp())
 
     assert volume.flags["C_CONTIGUOUS"]
 
@@ -140,7 +140,7 @@ def test_volume_is_c_contiguous():
 def test_volume_from_a_fortran_array_is_still_c_contiguous():
     arr = np.asfortranarray(ramp())
 
-    volume, _ = volume_float32(arr)
+    volume, _, _ = volume_float32(arr)
 
     assert volume.flags["C_CONTIGUOUS"]
     np.testing.assert_array_equal(volume, ramp())
@@ -149,28 +149,28 @@ def test_volume_from_a_fortran_array_is_still_c_contiguous():
 def test_volume_from_a_sliced_view_is_contiguous():
     arr = ramp((8, 8, 8))[::2, ::2, :]
 
-    volume, _ = volume_float32(arr)
+    volume, _, _ = volume_float32(arr)
 
     assert volume.flags["C_CONTIGUOUS"]
     np.testing.assert_array_equal(volume, arr)
 
 
 def test_shape_is_returned_and_matches_the_volume():
-    volume, shape = volume_float32(ramp((4, 5, 6)))
+    volume, shape, _ = volume_float32(ramp((4, 5, 6)))
 
     assert shape == (4, 5, 6)
     assert shape == volume.shape
 
 
 def test_default_stride_keeps_every_layer():
-    volume, shape = volume_float32(ramp((4, 5, 6)))
+    volume, shape, _ = volume_float32(ramp((4, 5, 6)))
 
     assert shape == (4, 5, 6)
     np.testing.assert_array_equal(volume, ramp((4, 5, 6)).astype(np.float32))
 
 
 def test_stride_thins_only_the_z_axis():
-    volume, shape = volume_float32(ramp((4, 5, 6)), zstride=2)
+    volume, shape, _ = volume_float32(ramp((4, 5, 6)), zstride=2)
 
     assert shape == (4, 5, 3)
 
@@ -178,7 +178,7 @@ def test_stride_thins_only_the_z_axis():
 def test_stride_keeps_the_first_layer():
     arr = ramp((2, 2, 7))
 
-    volume, _ = volume_float32(arr, zstride=3)
+    volume, _, _ = volume_float32(arr, zstride=3)
 
     np.testing.assert_array_equal(volume[:, :, 0], arr[:, :, 0].astype(np.float32))
 
@@ -186,27 +186,27 @@ def test_stride_keeps_the_first_layer():
 def test_stride_selects_every_nth_layer():
     arr = ramp((2, 2, 7))
 
-    volume, _ = volume_float32(arr, zstride=3)
+    volume, _, _ = volume_float32(arr, zstride=3)
 
     np.testing.assert_array_equal(volume, arr[:, :, ::3].astype(np.float32))
 
 
 def test_stride_larger_than_the_axis_keeps_one_layer():
-    volume, shape = volume_float32(ramp((3, 3, 4)), zstride=99)
+    volume, shape, _ = volume_float32(ramp((3, 3, 4)), zstride=99)
 
     assert shape == (3, 3, 1)
 
 
 def test_stride_of_the_dataset_shape():
     """(44, 44, 1601) at stride 4 -> 401 layers, ~3.1 MB of float32."""
-    volume, shape = volume_float32(np.zeros((44, 44, 1601)), zstride=4)
+    volume, shape, _ = volume_float32(np.zeros((44, 44, 1601)), zstride=4)
 
     assert shape == (44, 44, 401)
     assert volume.nbytes == 44 * 44 * 401 * 4
 
 
 def test_byte_length_matches_the_shape():
-    volume, shape = volume_float32(ramp((4, 5, 6)), zstride=2)
+    volume, shape, _ = volume_float32(ramp((4, 5, 6)), zstride=2)
 
     assert volume.nbytes == np.prod(shape) * 4
 
@@ -215,7 +215,7 @@ def test_bytes_round_trip_as_a_float32_array():
     """What the browser does: read the raw bytes back into the same volume."""
     arr = ramp((3, 4, 5))
 
-    volume, shape = volume_float32(arr)
+    volume, shape, _ = volume_float32(arr)
     restored = np.frombuffer(volume.tobytes(), dtype="<f4").reshape(shape)
 
     np.testing.assert_array_equal(restored, arr.astype(np.float32))
@@ -225,7 +225,7 @@ def test_bytes_are_in_c_order_x_major():
     # Index (i, j, k) must land at i*ny*nz + j*nz + k, which is what the
     # browser's indexing assumes.
     arr = ramp((2, 3, 4))
-    volume, (nx, ny, nz) = volume_float32(arr)
+    volume, (nx, ny, nz), _ = volume_float32(arr)
     flat = np.frombuffer(volume.tobytes(), dtype="<f4")
 
     for i in range(nx):
@@ -257,6 +257,6 @@ def test_source_array_is_not_modified():
 def test_float32_conversion_does_not_change_representable_values():
     arr = np.array([[[0.0, 0.5, -0.25, 1024.0]]])
 
-    volume, _ = volume_float32(arr)
+    volume, _, _ = volume_float32(arr)
 
     np.testing.assert_array_equal(volume, arr.astype(np.float32))
