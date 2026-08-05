@@ -258,7 +258,7 @@ def test_the_binary_still_matches_its_declared_size(root, tmp_path):
         root, tmp_path / "d", unit_grid(), stride=(2, 2, 1), zmax=20, field="weight"
     )
 
-    assert meta["bytes"] == (tmp_path / "d" / "potential.bin").stat().st_size
+    assert meta["bytes"] == (tmp_path / "d" / meta["bin"]).stat().st_size
 
 
 def test_weight_meta_is_json_serializable(root, tmp_path):
@@ -337,7 +337,7 @@ def test_export_potential_weight_uses_the_documented_defaults(root, tmp_path, ca
     main(["export-potential", "--root", str(root), "--dest-dir", str(dest),
           "--field", "weight"])
 
-    meta = json.loads((dest / "potential.json").read_text())
+    meta = json.loads((dest / "potential_weight.json").read_text())
     assert meta["stride"] == [2, 2, 1]
     assert meta["zmax"] == 300
     assert meta["units"] == "dimensionless"
@@ -359,7 +359,7 @@ def test_an_explicit_stride_overrides_the_weight_default(root, tmp_path):
     main(["export-potential", "--root", str(root), "--dest-dir", str(dest),
           "--field", "weight", "--stride", "1,1,2"])
 
-    meta = json.loads((dest / "potential.json").read_text())
+    meta = json.loads((dest / "potential_weight.json").read_text())
     assert meta["stride"] == [1, 1, 2]
 
 
@@ -369,7 +369,7 @@ def test_an_explicit_zmax_overrides_the_weight_default(root, tmp_path):
     main(["export-potential", "--root", str(root), "--dest-dir", str(dest),
           "--field", "weight", "--zmax", "12"])
 
-    meta = json.loads((dest / "potential.json").read_text())
+    meta = json.loads((dest / "potential_weight.json").read_text())
     assert meta["zmax"] == 12
     assert meta["shape"][2] == 12
 
@@ -381,7 +381,7 @@ def test_zstride_suppresses_the_weight_stride_default(root, tmp_path):
     assert main(["export-potential", "--root", str(root), "--dest-dir", str(dest),
                  "--field", "weight", "--zstride", "2"]) == 0
 
-    meta = json.loads((dest / "potential.json").read_text())
+    meta = json.loads((dest / "potential_weight.json").read_text())
     assert meta["stride"] == [1, 1, 2]
 
 
