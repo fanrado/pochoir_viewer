@@ -11,5 +11,8 @@ __pycache__/
 # Generated viewer data
 web/data/
 
+# Node (test-only dependency for importing web/*.js under node --test)
+node_modules/
+
 # Node
 node_modules/
