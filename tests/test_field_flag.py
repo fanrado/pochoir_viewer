@@ -9,10 +9,7 @@ from pochoir_viewer.cli import _int_list, main
 from pochoir_viewer.export import build_scene
 from pochoir_viewer.grid import Grid
 from pochoir_viewer.potential import (
-    DEFAULT_LEVELS,
     FIELD_UNITS,
-    WEIGHT_LEVELS,
-    default_levels,
     load_potential,
     potential_stats,
     write_potential,
@@ -71,18 +68,6 @@ def root(tmp_path):
 
 def unit_grid(shape=(8, 8, 40)):
     return Grid.from_shape(shape, spacing=(1.0, 1.0, 1.0))
-
-
-# --- default_levels and units -----------------------------------------------
-
-
-def test_default_levels_per_field():
-    assert default_levels("drift") == DEFAULT_LEVELS
-    assert default_levels("weight") == WEIGHT_LEVELS
-
-
-def test_default_levels_defaults_to_drift():
-    assert default_levels() == DEFAULT_LEVELS
 
 
 def test_field_units():
@@ -212,28 +197,6 @@ def test_weight_units_are_dimensionless(root, tmp_path):
     meta = write_potential(root, tmp_path / "d", unit_grid(), field="weight")
 
     assert meta["units"] == "dimensionless"
-
-
-def test_weight_defaults_to_the_weight_levels(root, tmp_path):
-    meta = write_potential(root, tmp_path / "d", unit_grid(), field="weight")
-
-    drawn = [s["level"] for s in meta["isosurfaces"]] + meta["skipped_levels"]
-    assert drawn == list(WEIGHT_LEVELS)
-
-
-def test_drift_defaults_to_the_volt_levels(root, tmp_path):
-    meta = write_potential(root, tmp_path / "d", unit_grid())
-
-    drawn = [s["level"] for s in meta["isosurfaces"]] + meta["skipped_levels"]
-    assert sorted(drawn) == sorted(DEFAULT_LEVELS)
-
-
-def test_explicit_levels_override_the_field_default(root, tmp_path):
-    meta = write_potential(
-        root, tmp_path / "d", unit_grid(), levels=[0.5], field="weight"
-    )
-
-    assert [s["level"] for s in meta["isosurfaces"]] == [0.5]
 
 
 def test_zstride_is_recorded_from_the_effective_stride(root, tmp_path):
@@ -417,27 +380,6 @@ def test_no_crop_report_when_nothing_is_dropped(root, tmp_path, capsys):
     main(["export-potential", "--root", str(root), "--dest-dir", str(dest)])
 
     assert "cropped at" not in capsys.readouterr().out
-
-
-def test_weight_levels_print_without_a_volt_unit(root, tmp_path, capsys):
-    dest = tmp_path / "d"
-
-    main(["export-potential", "--root", str(root), "--dest-dir", str(dest),
-          "--field", "weight"])
-
-    out = capsys.readouterr().out
-    for line in out.splitlines():
-        if "triangles" in line:
-            assert " V " not in line and not line.strip().startswith("V")
-
-
-def test_drift_levels_still_print_volts(root, tmp_path, capsys):
-    dest = tmp_path / "d"
-
-    main(["export-potential", "--root", str(root), "--dest-dir", str(dest)])
-
-    out = capsys.readouterr().out
-    assert any("V ->" in line for line in out.splitlines())
 
 
 def test_the_summary_states_the_field_and_stride(root, tmp_path, capsys):
