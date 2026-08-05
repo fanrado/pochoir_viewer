@@ -146,7 +146,7 @@ export function voxelReading(volume, meta, i, j, k) {
 }
 
 /** Draw the vertical colorbar and its hover tick. */
-export function createColorbar(meta, doc = document) {
+export function createColorbar(meta, doc = globalThis.document) {
   const canvas = doc.getElementById("colorbar");
   const ctx = canvas?.getContext("2d");
   const { width, height } = canvas ?? { width: 0, height: 0 };
@@ -196,7 +196,7 @@ export function createColorbar(meta, doc = document) {
  * On axis change the slider range is rebuilt from the volume shape and the
  * current index clamped, so a tall z range cannot leave a stale index behind.
  */
-export function wireSliceControls(view, doc = document) {
+export function wireSliceControls(view, doc = globalThis.document) {
   const slider = doc.getElementById("slice-idx");
   const label = doc.getElementById("slice-label");
   const radios = {
@@ -245,7 +245,7 @@ export function wireSliceControls(view, doc = document) {
  * position on the colorbar. Skipped levels are stated rather than dropped
  * silently.
  */
-export function buildIsoSurfaces(meta, group, panel) {
+export function buildIsoSurfaces(meta, group, panel, doc = globalThis.document) {
   const meshes = [];
 
   for (const surface of meta.isosurfaces ?? []) {
@@ -272,8 +272,8 @@ export function buildIsoSurfaces(meta, group, panel) {
     meshes.push(mesh);
 
     if (!panel) continue;
-    const label = document.createElement("label");
-    const box = document.createElement("input");
+    const label = doc.createElement("label");
+    const box = doc.createElement("input");
     box.type = "checkbox";
     box.checked = true;
     box.addEventListener("change", () => { mesh.visible = box.checked; });
@@ -283,7 +283,7 @@ export function buildIsoSurfaces(meta, group, panel) {
 
   const skipped = meta.skipped_levels ?? [];
   if (skipped.length > 0 && panel) {
-    const note = document.createElement("div");
+    const note = doc.createElement("div");
     note.className = "iso-skipped";
     note.textContent = `skipped (out of range): ${skipped.map((v) => `${v} V`).join(", ")}`;
     panel.append(note);
