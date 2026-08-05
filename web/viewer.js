@@ -214,6 +214,45 @@ document.getElementById("reset-view").addEventListener("click", frameView);
 applyScale();
 frameView();
 
+// Hover a trajectory to identify it, so the bundle is inspectable rather than
+// decorative.
+const readout = document.getElementById("readout");
+const raycaster = new THREE.Raycaster();
+raycaster.params.Line.threshold = 0.05;
+const pointer = new THREE.Vector2();
+
+/** Path owning a given vertex index, or -1. */
+function pathOfVertex(index) {
+  for (let p = 0; p < pathRanges.length; p++) {
+    const { start, count } = pathRanges[p];
+    if (index >= start && index < start + count) return p;
+  }
+  return -1;
+}
+
+const trim = (v) => String(Number(v.toFixed(2)));
+const triple = (xyz) => xyz.map(trim).join(", ");
+
+window.addEventListener("pointermove", (event) => {
+  pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
+  pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+
+  const hit = raycaster.intersectObject(pathLines, false)[0];
+  const id = hit ? pathOfVertex(hit.index) : -1;
+  const shown = offsetOfPath(Number(npathsInput.value));
+
+  if (id < 0 || pathRanges[id].start >= shown) {
+    readout.textContent = "";
+    return;
+  }
+
+  const s = scene_data.summaries[id];
+  readout.textContent =
+    `path ${s.id} - start (${triple(s.start)}) -> end (${triple(s.end)}), ` +
+    `dz ${trim(s.z_travel)} mm, ${s.n_steps} steps`;
+});
+
 window.addEventListener("resize", () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
