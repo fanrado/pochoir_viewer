@@ -309,8 +309,9 @@ export function enableViewCubePicking(gizmo, renderer, mainCamera, controls, get
   renderer.domElement.addEventListener("pointerup", endDrag);
   renderer.domElement.addEventListener("pointercancel", endDrag);
   // Releasing after the pointer has left the window must not strand the drag.
-  window.addEventListener("pointerup", endDrag);
-  window.addEventListener("blur", endDrag);
+  // globalThis.window, not a bare window: this module is imported under node.
+  globalThis.window?.addEventListener("pointerup", endDrag);
+  globalThis.window?.addEventListener("blur", endDrag);
 
   return { goTo, insideRect, isDragging: () => Boolean(drag?.exceeded) };
 }
