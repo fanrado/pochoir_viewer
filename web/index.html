@@ -62,6 +62,8 @@
   #contour-legend { color: #444; }
   #scale-controls { margin-top: 8px; }
   #scale-buttons { display: flex; gap: 4px; margin-top: 4px; }
+  #contour-scaling { margin-top: 6px; }
+  #contour-scaling-buttons { display: flex; gap: 4px; margin-top: 4px; }
   #panel button.layer:disabled { opacity: 0.5; cursor: not-allowed; }
   #contour-status { color: #a05000; min-height: 1em; }
   #colorbar-scale { position: relative; }
@@ -188,6 +190,13 @@
     <div id="contour-controls" class="sec">
       <div class="sec-head">contours</div>
       <button id="layer-contours" class="layer" aria-pressed="false">Contours</button>
+      <div id="contour-scaling">
+        <b>level scaling</b>
+        <div id="contour-scaling-buttons" role="group" aria-label="contour level scaling">
+          <button id="scaling-global" class="layer" aria-pressed="false">global</button>
+          <button id="scaling-slice" class="layer" aria-pressed="false">per-slice</button>
+        </div>
+      </div>
       <label for="contour-count">levels <span id="contour-count-label"></span></label>
       <input type="range" id="contour-count" min="100" max="5000" step="100" value="200">
       <div id="contour-status"></div>

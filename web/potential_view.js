@@ -558,13 +558,22 @@ export function buildIsoSurfaces(
  * decades, so linear levels land almost entirely inside the top 1% of the
  * range. Endpoints are excluded — a contour exactly at the extreme has nothing
  * to separate.
+ *
+ * Only `.vmin` and `.vmax` are read, so per-slice scaling can pass one slice's
+ * own range here in place of the payload-wide meta.
  */
 export function contourLevels(meta, count, opts = { scale: "linear", decades: 8 }) {
   const n = Math.max(1, Math.floor(count));
   const levels = [];
 
   if (opts.scale === "log") {
-    const floor = meta.vmax * Math.pow(10, -opts.decades);
+    // The decades window is the floor only when vmin cannot supply one. A
+    // per-slice range has a positive vmin, and honouring it is what puts the
+    // levels inside the data: a slice spanning 3.7e-4..5.0e-4 covers well under
+    // one decade, so an 8-decade window below its max would place all but a
+    // handful of levels beneath anything the slice contains. Global ranges start
+    // at vmin = 0, where the window remains the only usable floor.
+    const floor = Math.max(meta.vmin, meta.vmax * Math.pow(10, -opts.decades));
     const logFloor = Math.log10(floor);
     const logMax = Math.log10(meta.vmax);
     for (let k = 1; k <= n; k++) {
@@ -593,6 +602,26 @@ export function defaultContourLevels(meta, step = 1000) {
 
 /** Weighting-potential contour levels: log-ish, matching WEIGHT_LEVELS. */
 export const WEIGHT_CONTOUR_LEVELS = [0.9, 0.75, 0.5, 0.25, 0.1, 0.05, 0.01];
+
+/** The two contour level-scaling modes. */
+export const CONTOUR_SCALINGS = ["global", "slice"];
+
+/**
+ * Value range of one extracted slice, or null when the slice is flat.
+ *
+ * A flat slice has nothing for a contour to separate, so callers fall back to
+ * the global range rather than dividing by a zero span.
+ */
+export function sliceRange(values) {
+  let vmin = Infinity;
+  let vmax = -Infinity;
+  for (let n = 0; n < values.length; n += 1) {
+    const v = values[n];
+    if (v < vmin) vmin = v;
+    if (v > vmax) vmax = v;
+  }
+  return vmax > vmin ? { vmin, vmax } : null;
+}
 
 /**
  * Draw contour lines over the slice plane.
@@ -630,6 +659,14 @@ export function createContourView(meta, volume, sceneRoot, doc = globalThis.docu
   let scaleOpts = { scale: "linear", decades: 8 };
   let last = null;
 
+  // Per-slice is the weighting default and global the drift default. The
+  // weighting slice maxima span 37.6x (0.954 at z=101 against 0.025 at z=150),
+  // so a global range leaves a low-max slice nearly blank; the drift potential
+  // runs a near-linear -9500..0 V and gains nothing from renormalising.
+  // meta.vmin < 0 identifies the signed drift field, the same test
+  // wireScaleControls uses to disable log.
+  let scaling = meta.vmin < 0 ? "global" : "slice";
+
   const unit = (meta.units ?? "V") === "V" ? " V" : "";
   const label = (level) =>
     `${(meta.units ?? "V") === "V" ? level : level.toExponential(2)}${unit}`;
@@ -641,6 +678,16 @@ export function createContourView(meta, volume, sceneRoot, doc = globalThis.docu
     if (levels.length > MAX_PER_LEVEL_CHECKBOXES) {
       const note = doc.createElement("div");
       note.textContent = `${levels.length} levels — per-level toggles shown at ${MAX_PER_LEVEL_CHECKBOXES} or fewer`;
+      levelsPanel.append(note);
+      return;
+    }
+
+    // Per-slice levels are recomputed for every slice, so a fixed checkbox
+    // could not name a level that survives a scrub. Say so instead of
+    // offering toggles that would silently stop matching.
+    if (scaling === "slice") {
+      const note = doc.createElement("div");
+      note.textContent = `${levels.length} levels, re-placed per slice — per-level toggles need global scaling`;
       levelsPanel.append(note);
       return;
     }
@@ -658,6 +705,30 @@ export function createContourView(meta, volume, sceneRoot, doc = globalThis.docu
     }
   }
 
+  /**
+   * The levels to draw on one slice, and the range they were placed across.
+   *
+   * Global scaling uses the level set as given. Per-slice re-places the SAME
+   * NUMBER of levels across the slice's own range, which is the whole point:
+   * 200 levels spread over the payload's 0..0.954 leave a 0.025-max slice with
+   * almost every level above its data. The colour ramp keys to the same range
+   * the levels came from, or a per-slice set would collapse into one colour at
+   * the bottom of the ramp.
+   *
+   * Deliberately NOT touched: the slice image and the colorbar keep the
+   * payload-wide meta.vmin/vmax, so the voltage scale on screen stays stable
+   * and comparable while scrubbing.
+   */
+  function activeLevels(slice) {
+    if (scaling !== "slice") return { levels, range: meta };
+    const range = sliceRange(slice.values);
+    if (!range) return { levels, range: meta }; // flat slice
+    return {
+      levels: contourLevels(range, levels.length, scaleOpts),
+      range,
+    };
+  }
+
   /** Rebuild the merged buffer for the given slice. Returns the segment count. */
   function update(axis, index) {
     last = { axis, index };
@@ -668,12 +739,17 @@ export function createContourView(meta, volume, sceneRoot, doc = globalThis.docu
     const colors = [];
     const scratch = new THREE.Color();
 
-    for (const level of levels) {
+    // Per-slice levels are freshly derived each slice, so they are absent from
+    // `enabled` and the `=== false` test below leaves them all on. Per-level
+    // checkboxes only ever appear in global mode.
+    const active = activeLevels(slice);
+
+    for (const level of active.levels) {
       if (enabled.get(level) === false) continue;
       const segments = contourSegments(slice.values, slice.width, slice.height, level);
       if (segments.length === 0) continue;
 
-      const t = scalePosition(level, meta.vmin, meta.vmax, scaleOpts);
+      const t = scalePosition(level, active.range.vmin, active.range.vmax, scaleOpts);
       const [r, g, b] = rampRGB(t);
       scratch.setRGB(r / 255, g / 255, b / 255);
 
@@ -729,6 +805,34 @@ export function createContourView(meta, volume, sceneRoot, doc = globalThis.docu
     if (last) update(last.axis, last.index);
   }
 
+  /** Switch level scaling. Returns the new segment count. */
+  function setScaling(mode) {
+    if (!CONTOUR_SCALINGS.includes(mode)) return 0;
+    scaling = mode;
+    paintScalingButtons();
+    rebuildCheckboxes(); // the panel says which mode is in force
+    return last ? update(last.axis, last.index) : 0;
+  }
+
+  // Like the contour toggle below, these live here so the contour layer owns
+  // all of its own DOM.
+  const scalingButtons = {
+    global: doc.getElementById("scaling-global"),
+    slice: doc.getElementById("scaling-slice"),
+  };
+
+  function paintScalingButtons() {
+    for (const [mode, button] of Object.entries(scalingButtons)) {
+      const on = mode === scaling;
+      button?.setAttribute("aria-pressed", String(on));
+      button?.classList?.toggle("active", on);
+    }
+  }
+
+  for (const [mode, button] of Object.entries(scalingButtons)) {
+    button?.addEventListener("click", () => setScaling(mode));
+  }
+
   // The group toggle lives here rather than in viewer.js so the contour layer
   // owns all of its own DOM.
   const toggle = doc.getElementById("layer-contours");
@@ -739,8 +843,17 @@ export function createContourView(meta, volume, sceneRoot, doc = globalThis.docu
     group.visible = on;
   });
 
+  paintScalingButtons();
   rebuildCheckboxes();
-  return { group, update, setLevels, setScale, levels: () => [...levels] };
+  return {
+    group,
+    update,
+    setLevels,
+    setScale,
+    setScaling,
+    levels: () => [...levels],
+    scaling: () => scaling,
+  };
 }
 
 /**
