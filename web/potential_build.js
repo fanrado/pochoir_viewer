@@ -131,14 +131,31 @@ export function valuesToRGBA(values, vmin, vmax) {
   return rgba;
 }
 
-/** Millimetre position of `index` along `axis`, honouring meta.zstride. */
+/**
+ * Per-axis stride, read in ONE place so no caller can miss an axis.
+ *
+ * Payloads carry a 3-tuple `stride`; older ones carry only the scalar
+ * `zstride`, which covered z alone. The fallback keeps those working.
+ */
+export function metaStride(meta) {
+  return meta.stride ?? [1, 1, meta.zstride ?? 1];
+}
+
+/**
+ * Millimetre position of `index` along `axis`.
+ *
+ * Every axis carries its own stride: the volume holds every stride[k]-th
+ * sample, so an index step is stride[k] * spacing[k] millimetres. Applying the
+ * stride to z alone put x and y at half their true position whenever the export
+ * used a transverse stride, as the weighting field does.
+ */
 function axisMm(axis, index, meta) {
   const [sx, sy, sz] = meta.spacing;
+  const [tx, ty, tz] = metaStride(meta);
   const origin = meta.origin ?? [0, 0, 0];
-  if (axis === "x") return origin[0] + index * sx;
-  if (axis === "y") return origin[1] + index * sy;
-  // z is the strided axis: the volume holds every zstride-th sample.
-  return origin[2] + index * (meta.zstride ?? 1) * sz;
+  if (axis === "x") return origin[0] + index * tx * sx;
+  if (axis === "y") return origin[1] + index * ty * sy;
+  return origin[2] + index * tz * sz;
 }
 
 /**
@@ -151,14 +168,15 @@ export function slicePlaneParams(axis, index, meta) {
 
   const [ni, nj, nk] = meta.shape;
   const [sx, sy, sz] = meta.spacing;
-  const zstride = meta.zstride ?? 1;
+  const [tx, ty, tz] = metaStride(meta);
   const origin = meta.origin ?? [0, 0, 0];
 
   // Node (i,j,k) is the lower corner of its cell; spans are n*spacing to match
-  // boundary.py and Grid.extent_mm. z carries the stride.
-  const spanX = ni * sx;
-  const spanY = nj * sy;
-  const spanZ = nk * zstride * sz;
+  // boundary.py and Grid.extent_mm. Each axis also carries its own stride, so a
+  // strided volume still covers the full domain rather than a fraction of it.
+  const spanX = ni * tx * sx;
+  const spanY = nj * ty * sy;
+  const spanZ = nk * tz * sz;
 
   const midX = origin[0] + spanX / 2;
   const midY = origin[1] + spanY / 2;

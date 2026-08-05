@@ -7,6 +7,7 @@ import * as THREE from "three";
 import { contourSegments } from "./contour_build.js";
 import {
   extractSlice,
+  metaStride,
   rampPosition,
   rampRGB,
   sliceLabel,
@@ -138,11 +139,17 @@ export function uvToVoxel(u, v, axis, index, meta) {
  */
 export function voxelReading(volume, meta, i, j, k) {
   const [sx, sy, sz] = meta.spacing;
+  const [tx, ty, tz] = metaStride(meta);
   const origin = meta.origin ?? [0, 0, 0];
-  const zstride = meta.zstride ?? 1;
   return {
     value: volume[(i * meta.shape[1] + j) * meta.shape[2] + k],
-    mm: [origin[0] + i * sx, origin[1] + j * sy, origin[2] + k * zstride * sz],
+    // Every axis carries its own stride, so the reported x and y agree with the
+    // boundary geometry and the pivot readout rather than reading half-scale.
+    mm: [
+      origin[0] + i * tx * sx,
+      origin[1] + j * ty * sy,
+      origin[2] + k * tz * sz,
+    ],
   };
 }
 
@@ -481,11 +488,13 @@ export function createContourView(meta, volume, sceneRoot, doc = globalThis.docu
     const slice = extractSlice(volume, meta.shape, axis, index);
     const plane = slicePlaneParams(axis, index, meta);
 
-    // Offset along the normal by a fraction of a voxel: enough to clear the
-    // texture, too little to read as a gap.
+    // Offset along the normal by a fraction of ONE VOXEL: enough to clear the
+    // texture, too little to read as a gap. A voxel is stride[k] * spacing[k] on
+    // each axis, so the fraction stays consistent whatever the export strided.
     const [sx, sy, sz] = meta.spacing;
-    const nudge =
-      0.02 * (axis === "x" ? sx : axis === "y" ? sy : sz * (meta.zstride ?? 1));
+    const [tx, ty, tz] = metaStride(meta);
+    const voxel = axis === "x" ? tx * sx : axis === "y" ? ty * sy : tz * sz;
+    const nudge = 0.02 * voxel;
     const normal = new THREE.Vector3(
       axis === "x" ? 1 : 0,
       axis === "y" ? 1 : 0,
