@@ -316,7 +316,7 @@ export const WEIGHT_CONTOUR_LEVELS = [0.9, 0.75, 0.5, 0.25, 0.1, 0.05, 0.01];
  * nudged along the plane normal by a fraction of a voxel to stop it z-fighting
  * with the texture.
  */
-export function createContourView(meta, volume, sceneRoot, doc = document) {
+export function createContourView(meta, volume, sceneRoot, doc = globalThis.document) {
   const group = new THREE.Group();
   group.name = "contourGroup";
   group.visible = false;
