@@ -98,6 +98,22 @@ function rampColor(t) {
   return RAMP[RAMP.length - 1][1];
 }
 
+/**
+ * Ramp colour at normalised position `t`, as [r, g, b] bytes.
+ *
+ * Exported so the colorbar and the isosurface materials draw from the same
+ * ramp as the slice image and cannot drift apart.
+ */
+export function rampRGB(t) {
+  return rampColor(Math.min(Math.max(t, 0), 1));
+}
+
+/** Normalised ramp position of `value` within [vmin, vmax]. */
+export function rampPosition(value, vmin, vmax) {
+  if (vmax === vmin) return 0;
+  return Math.min(Math.max((value - vmin) / (vmax - vmin), 0), 1);
+}
+
 /** Map `values` through the ramp into RGBA bytes. */
 export function valuesToRGBA(values, vmin, vmax) {
   const rgba = new Uint8Array(values.length * 4);

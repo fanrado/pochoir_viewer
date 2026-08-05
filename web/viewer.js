@@ -14,6 +14,15 @@ import {
   enableKeyboardShortcuts,
 } from "./nav.js";
 import { createViewCube, enableViewCubePicking } from "./viewcube.js";
+import {
+  buildIsoSurfaces,
+  createColorbar,
+  createSliceView,
+  fetchPotential,
+  uvToVoxel,
+  voxelReading,
+  wireSliceControls,
+} from "./potential_view.js";
 
 const scene_data = await (await fetch("data/scene.json")).json();
 console.log(scene_data.meta);
@@ -195,6 +204,23 @@ window.addEventListener("pointermove", (event) => {
   pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
 
+  // Voltage readout: only when the slice is actually on screen.
+  if (sliceView?.mesh.visible) {
+    const slice = raycaster.intersectObject(sliceView.mesh, false)[0];
+    if (slice?.uv) {
+      const axis = sliceControls.getAxis();
+      const index = Number(document.getElementById("slice-idx").value);
+      const [i, j, k] = uvToVoxel(slice.uv.x, slice.uv.y, axis, index, potentialMeta);
+      const { value, mm } = voxelReading(potentialVolume, potentialMeta, i, j, k);
+      voltReadout.textContent =
+        `(${mm.map((v) => v.toFixed(2)).join(", ")}) mm = ${value.toFixed(1)} V`;
+      colorbar.setTick(value);
+    } else {
+      voltReadout.textContent = "";
+      colorbar.setTick(null);
+    }
+  }
+
   const hit = raycaster.intersectObject(pathLines, false)[0];
   const id = hit ? pathOfVertex(hit.index) : -1;
   const shown = offsetOfPath(Number(npathsInput.value));
@@ -228,6 +254,65 @@ function pivotUnderCursor(clientX, clientY) {
 canvas.addEventListener("dblclick", (event) => {
   pivotUnderCursor(event.clientX, event.clientY);
 });
+
+// --- optional potential payload ------------------------------------------
+//
+// The potential export is opt-in, so a missing payload disables its two layer
+// buttons rather than breaking the page.
+const isoGroup = new THREE.Group();
+isoGroup.name = "isoGroup";
+isoGroup.visible = false;
+sceneRoot.add(isoGroup);
+
+const potentialControls = document.getElementById("potential-controls");
+const voltReadout = document.getElementById("volt-readout");
+let sliceView = null;
+let sliceControls = null;
+let potentialVolume = null;
+let potentialMeta = null;
+let colorbar = null;
+
+try {
+  const { meta, volume } = await fetchPotential();
+  sliceView = createSliceView(meta, volume, sceneRoot);
+  sliceControls = wireSliceControls(sliceView);
+  potentialVolume = volume;
+  potentialMeta = meta;
+  colorbar = createColorbar(meta);
+  buildIsoSurfaces(meta, isoGroup, document.getElementById("iso-levels"));
+} catch (error) {
+  console.warn(
+    `potential layers unavailable (${error.message}); ` +
+      "run: python -m pochoir_viewer export-potential",
+  );
+  for (const id of ["layer-slice", "layer-iso"]) {
+    const button = document.getElementById(id);
+    button.disabled = true;
+    button.title = "run: python -m pochoir_viewer export-potential";
+  }
+}
+
+// --- layer toggles --------------------------------------------------------
+
+/** Bind a layer button to a visibility setter. Never moves the camera. */
+function wireLayer(id, apply) {
+  const button = document.getElementById(id);
+  button.addEventListener("click", () => {
+    if (button.disabled) return;
+    const on = button.getAttribute("aria-pressed") !== "true";
+    button.setAttribute("aria-pressed", String(on));
+    button.classList.toggle("active", on);
+    apply(on);
+  });
+}
+
+wireLayer("layer-paths", (on) => { pathLines.visible = on; });
+wireLayer("layer-boundary", (on) => { boundaryGroup.visible = on; });
+wireLayer("layer-slice", (on) => {
+  if (sliceView) sliceView.mesh.visible = on;
+  potentialControls.hidden = !on;
+});
+wireLayer("layer-iso", (on) => { isoGroup.visible = on; });
 
 enableKeyboardShortcuts({
   axisView: (dir) => cubePick.goTo(dir),

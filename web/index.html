@@ -35,6 +35,11 @@
   #axis-radios label { display: inline-block; margin: 0 6px 0 0; }
   #colorbar-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
   #colorbar { border: 1px solid #999; }
+  #colorbar-scale {
+    display: flex; flex-direction: column; justify-content: space-between;
+    height: 160px; font-size: 11px; color: #444;
+  }
+  .iso-skipped { margin-top: 4px; color: #a05000; }
 
   #shortcuts { margin-top: 12px; border-top: 1px solid #ccc; padding-top: 8px; color: #444; }
   #shortcuts kbd {
@@ -81,6 +86,10 @@
     <span id="slice-label"></span>
     <div id="colorbar-row">
       <canvas id="colorbar" width="16" height="160"></canvas>
+      <div id="colorbar-scale">
+        <span id="colorbar-max"></span>
+        <span id="colorbar-min"></span>
+      </div>
       <span id="volt-readout"></span>
     </div>
     <div id="iso-levels"></div>
