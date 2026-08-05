@@ -4,6 +4,7 @@ This is the second dataset the viewer shows. It is far bulkier than the
 geometry, so it travels as raw float32 bytes rather than inside scene.json.
 """
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -39,6 +40,46 @@ def volume_float32(
 
     volume = np.ascontiguousarray(arr[:, :, ::zstride], dtype=np.float32)
     return volume, volume.shape
+
+
+def write_potential(
+    root: str | Path,
+    dest_dir: str | Path,
+    grid,
+    levels=DEFAULT_LEVELS,
+    zstride: int = 1,
+) -> dict:
+    """Write ``potential.bin`` and ``potential.json`` into `dest_dir`.
+
+    Returns the metadata that was written. ``bytes`` is taken from the file
+    actually on disk so the browser can validate the length of its fetch.
+    """
+    dest_dir = Path(dest_dir)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    arr = load_potential(root)
+    volume, shape = volume_float32(arr, zstride)
+    surfaces, skipped = isosurfaces(arr, grid, levels=levels, zstride=zstride)
+
+    binary = dest_dir / "potential.bin"
+    binary.write_bytes(volume.tobytes())
+
+    stats = potential_stats(arr)
+    meta = {
+        "shape": [int(n) for n in shape],
+        "zstride": int(zstride),
+        "spacing": [float(s) for s in grid.spacing],
+        "origin": [float(o) for o in grid.origin],
+        "units": stats["units"],
+        "vmin": stats["vmin"],
+        "vmax": stats["vmax"],
+        "bin": binary.name,
+        "bytes": binary.stat().st_size,
+        "isosurfaces": surfaces,
+        "skipped_levels": skipped,
+    }
+    (dest_dir / "potential.json").write_text(json.dumps(meta))
+    return meta
 
 
 def isosurfaces(
