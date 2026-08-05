@@ -132,7 +132,10 @@ def write_potential(
         arr, grid, levels=levels, stride=stride, zmax=zmax, zstride=zstride
     )
 
-    binary = dest_dir / "potential.bin"
+    # Drift keeps the Phase 8 names; other fields are suffixed so the two
+    # payloads can live side by side in one web/data directory.
+    stem = "potential" if field == "drift" else f"potential_{field}"
+    binary = dest_dir / f"{stem}.bin"
     binary.write_bytes(volume.tobytes())
 
     stats = potential_stats(arr, field)
@@ -157,7 +160,7 @@ def write_potential(
         meta["field"] = field
         meta["stride"] = list(effective)
         meta["zmax"] = zmax
-    (dest_dir / "potential.json").write_text(json.dumps(meta))
+    (dest_dir / f"{stem}.json").write_text(json.dumps(meta))
     return meta
 
 
