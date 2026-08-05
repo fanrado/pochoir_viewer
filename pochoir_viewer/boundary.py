@@ -68,12 +68,34 @@ def _group_names(count: int) -> list[str]:
     return ["anode"] + middles + ["cathode"]
 
 
-def boundary_groups(mask: np.ndarray, grid: Grid) -> list[dict]:
+def _index_name(z_min_mm: float, z_max_mm: float, sz: float) -> str:
+    """Label a slab by where it is, asserting nothing about its role.
+
+    Single-layer slabs read as one position; collapsed ones as a range.
+    """
+    single = abs((z_max_mm - z_min_mm) - sz) < sz / 2
+    if single:
+        return f"z {z_min_mm:.1f} mm"
+    return f"z {z_min_mm:.1f}-{z_max_mm:.1f} mm"
+
+
+def boundary_groups(
+    mask: np.ndarray, grid: Grid, naming: str = "role"
+) -> list[dict]:
     """Collapse the mask into named mm-space slabs for the viewer.
 
     Consecutive z-layers with array-equal 2D masks become one slab, given a
     thickness of one node along z so it is visible edge-on.
+
+    `naming` selects the labels. ``"role"`` keeps the anode/grid/cathode
+    heuristic. ``"index"`` labels each slab by its z position instead, which is
+    what the weighting boundary needs: its lowest layer is a full plane at
+    z = 0, so the role heuristic would print "anode" on something that is not
+    one. Index naming states only what is actually known.
     """
+    if naming not in ("role", "index"):
+        raise ValueError(f"unknown naming {naming!r}, expected 'role' or 'index'")
+
     layers = mask_layers(mask)
 
     runs: list[list[tuple[int, np.ndarray]]] = []
@@ -103,8 +125,12 @@ def boundary_groups(mask: np.ndarray, grid: Grid) -> list[dict]:
         )
 
     groups.sort(key=lambda g: g["z_min_mm"])
-    for name, group in zip(_group_names(len(groups)), groups):
-        group["name"] = name
+    if naming == "role":
+        for name, group in zip(_group_names(len(groups)), groups):
+            group["name"] = name
+    else:
+        for group in groups:
+            group["name"] = _index_name(group["z_min_mm"], group["z_max_mm"], sz)
 
     return [
         {
