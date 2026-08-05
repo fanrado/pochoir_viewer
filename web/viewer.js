@@ -1,5 +1,11 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import {
+  buildBoundaryMesh,
+  buildPathBuffers,
+  offsetOfPath as offsetOfPathIn,
+  pathOfVertex as pathOfVertexIn,
+} from "./scene_build.js";
 
 const scene_data = await (await fetch("data/scene.json")).json();
 console.log(scene_data.meta);
@@ -29,41 +35,6 @@ const sun = new THREE.DirectionalLight(0xffffff, 1.0);
 sun.position.set(1, 1, 1);
 scene.add(sun);
 
-// Display labels, not physics claims — they come from the exporter's z ordering.
-const GROUP_COLORS = { anode: 0xff8844, grid: 0x44ccff, cathode: 0x88ff88 };
-const FALLBACK_COLORS = [0xcc99ff, 0xffcc44, 0x99ffcc, 0xff99cc];
-
-function buildBoundaryMesh(group, index) {
-  // One mesh per group: every quad contributes two +z-facing triangles.
-  const positions = new Float32Array(group.quads.length * 18);
-  const normals = new Float32Array(group.quads.length * 18);
-  const z = (group.z_min_mm + group.z_max_mm) / 2;
-
-  group.quads.forEach(([x0, y0, x1, y1], q) => {
-    const corners = [
-      x0, y0, z, x1, y0, z, x1, y1, z,
-      x0, y0, z, x1, y1, z, x0, y1, z,
-    ];
-    positions.set(corners, q * 18);
-    for (let v = 0; v < 6; v++) normals.set([0, 0, 1], q * 18 + v * 3);
-  });
-
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  geometry.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
-
-  const material = new THREE.MeshLambertMaterial({
-    color: GROUP_COLORS[group.name] ?? FALLBACK_COLORS[index % FALLBACK_COLORS.length],
-    transparent: true,
-    opacity: 0.35,
-    side: THREE.DoubleSide,
-  });
-
-  const mesh = new THREE.Mesh(geometry, material);
-  mesh.name = group.name;
-  return mesh;
-}
-
 const sceneRoot = new THREE.Group();
 sceneRoot.name = "sceneRoot";
 scene.add(sceneRoot);
@@ -88,44 +59,12 @@ scene_data.boundary.forEach((group, index) => {
 
 sceneRoot.add(boundaryGroup);
 
-// All 100 paths live in one buffer: 100 Line objects would be 100 draw calls,
-// and one buffer also gives the hover raycast a single target.
-const COLOR_FAR = new THREE.Color(0x2222ff); // at z = extent_mm[2]
-const COLOR_NEAR = new THREE.Color(0xffff22); // at z = 0
 const EXTENT_Z = scene_data.meta.extent_mm[2];
 
-const pathRanges = []; // {start, count} in vertices, indexed by path
-
-let vertexTotal = 0;
-for (const path of scene_data.paths) {
-  const segments = Math.max(path.points.length / 3 - 1, 0);
-  pathRanges.push({ start: vertexTotal, count: segments * 2 });
-  vertexTotal += segments * 2;
-}
-
-const linePositions = new Float32Array(vertexTotal * 3);
-const lineColors = new Float32Array(vertexTotal * 3);
-const scratch = new THREE.Color();
-
-scene_data.paths.forEach((path, p) => {
-  const pts = path.points;
-  let w = pathRanges[p].start * 3;
-
-  for (let i = 0; i + 5 < pts.length; i += 3) {
-    // Emit the consecutive pair (i, i+1) as one segment.
-    for (const base of [i, i + 3]) {
-      linePositions[w] = pts[base];
-      linePositions[w + 1] = pts[base + 1];
-      linePositions[w + 2] = pts[base + 2];
-
-      scratch.copy(COLOR_NEAR).lerp(COLOR_FAR, pts[base + 2] / EXTENT_Z);
-      lineColors[w] = scratch.r;
-      lineColors[w + 1] = scratch.g;
-      lineColors[w + 2] = scratch.b;
-      w += 3;
-    }
-  }
-});
+const { linePositions, lineColors, pathRanges, vertexTotal } = buildPathBuffers(
+  scene_data.paths,
+  EXTENT_Z,
+);
 
 const pathGeometry = new THREE.BufferGeometry();
 pathGeometry.setAttribute("position", new THREE.BufferAttribute(linePositions, 3));
@@ -138,12 +77,7 @@ const pathLines = new THREE.LineSegments(
 pathLines.name = "pathLines";
 sceneRoot.add(pathLines);
 
-/** Vertex offset just past path N-1, i.e. the draw count showing N paths. */
-function offsetOfPath(n) {
-  if (n <= 0) return 0;
-  if (n >= pathRanges.length) return vertexTotal;
-  return pathRanges[n - 1].start + pathRanges[n - 1].count;
-}
+const offsetOfPath = (n) => offsetOfPathIn(n, pathRanges, vertexTotal);
 
 const npathsInput = document.getElementById("npaths");
 npathsInput.addEventListener("input", () => {
@@ -221,14 +155,7 @@ const raycaster = new THREE.Raycaster();
 raycaster.params.Line.threshold = 0.05;
 const pointer = new THREE.Vector2();
 
-/** Path owning a given vertex index, or -1. */
-function pathOfVertex(index) {
-  for (let p = 0; p < pathRanges.length; p++) {
-    const { start, count } = pathRanges[p];
-    if (index >= start && index < start + count) return p;
-  }
-  return -1;
-}
+const pathOfVertex = (index) => pathOfVertexIn(index, pathRanges);
 
 const trim = (v) => String(Number(v.toFixed(2)));
 const triple = (xyz) => xyz.map(trim).join(", ");
