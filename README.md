@@ -89,8 +89,27 @@ neighbours like `drift_insulator.npz` are never picked up by mistake.
 `initial/`, `domain/`, `increment/` and `starts/` are intentionally ignored —
 they hold solver scratch state rather than results, and `domain/drift.npz` is
 an empty array. The exclusion lives in exactly one place, `SKIP_DIRS` in
-`pochoir_viewer/io.py`. Of the 18 `.npz` files in the reference dataset, 9 sit
-under those directories and 9 are readable datasets.
+`pochoir_viewer/io.py`.
+
+The reference dataset holds 18 `.npz` files, and the split is exactly even —
+9 skipped, 9 readable:
+
+| skipped | files | readable | files |
+| --- | --- | --- | --- |
+| `initial/` | 4 | `boundary/` | 2 |
+| `domain/` | 2 | `potential/` | 2 |
+| `increment/` | 2 | `paths/` | 2 |
+| `starts/` | 1 | `velocity/` | 2 |
+| | | `current/` | 1 |
+| **total** | **9** | **total** | **9** |
+
+`initial/` holding four files — `drift`, `weight`, `drift_insulator` and
+`weight_insulator` — is why the skipped side is larger than the directory count
+suggests. Check it yourself in one command:
+
+```bash
+python -c "from pochoir_viewer.io import list_datasets; print(len(list_datasets('../OUTPUT/store_largepix_wgrid')))"
+```
 
 ## Requirements
 
