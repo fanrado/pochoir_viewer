@@ -107,6 +107,7 @@ def isosurfaces(
     vmin = float(np.min(volume))
     vmax = float(np.max(volume))
     sx, sy, sz = grid.spacing
+    ox, oy, oz = grid.origin
 
     surfaces: list[dict] = []
     skipped: list[float] = []
@@ -122,10 +123,13 @@ def isosurfaces(
         # Vertices come back in the INDEX SPACE OF THE STRIDED VOLUME, so the
         # z index must be multiplied by zstride before scaling to mm —
         # otherwise every surface collapses toward the anode.
+        # Origin is added on every axis, matching Grid.index_to_mm and
+        # boundary_groups: two index-to-mm conversions that disagree would put
+        # the equipotential sheets off the boundary planes in the same scene.
         mm = np.empty_like(verts)
-        mm[:, 0] = verts[:, 0] * sx
-        mm[:, 1] = verts[:, 1] * sy
-        mm[:, 2] = verts[:, 2] * zstride * sz
+        mm[:, 0] = ox + verts[:, 0] * sx
+        mm[:, 1] = oy + verts[:, 1] * sy
+        mm[:, 2] = oz + verts[:, 2] * zstride * sz
 
         surfaces.append(
             {
