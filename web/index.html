@@ -27,6 +27,12 @@
   #contour-controls { margin-top: 8px; border-top: 1px solid #ddd; padding-top: 6px; }
   #contour-levels label { margin-top: 2px; }
   #contour-legend { color: #444; }
+  #scale-controls { margin-top: 8px; }
+  #scale-buttons { display: flex; gap: 4px; margin-top: 4px; }
+  #panel button.layer:disabled { opacity: 0.5; cursor: not-allowed; }
+  #contour-status { color: #a05000; min-height: 1em; }
+  #colorbar-scale { position: relative; }
+  .cb-tick { position: absolute; left: 0; font-size: 10px; color: #444; transform: translateY(-50%); }
   .contour-swatch {
     display: inline-block; width: 10px; height: 10px; border: 1px solid #999;
     vertical-align: middle;
@@ -125,8 +131,23 @@
       </div>
     </div>
 
+    <div id="scale-controls">
+      <b>colour scale</b>
+      <div id="scale-buttons" role="group" aria-label="colour scale">
+        <button id="scale-linear" class="layer active" aria-pressed="true">linear</button>
+        <button id="scale-log" class="layer" aria-pressed="false">log</button>
+      </div>
+      <div id="decades-row" hidden>
+        <label for="log-decades">decades <span id="log-decades-label"></span></label>
+        <input type="range" id="log-decades" min="2" max="20" step="1" value="8">
+      </div>
+    </div>
+
     <div id="contour-controls">
       <button id="layer-contours" class="layer" aria-pressed="false">Contours</button>
+      <label for="contour-count">levels <span id="contour-count-label"></span></label>
+      <input type="range" id="contour-count" min="100" max="5000" step="100" value="200">
+      <div id="contour-status"></div>
       <div id="contour-levels"></div>
       <div id="contour-legend"></div>
     </div>

@@ -8,6 +8,7 @@ import { contourSegments } from "./contour_build.js";
 import {
   extractSlice,
   metaStride,
+  scalePosition,
   rampPosition,
   rampRGB,
   sliceLabel,
@@ -71,8 +72,11 @@ export function createSliceView(meta, volume, sceneRoot) {
   let texture = null;
   let texWidth = 0;
   let texHeight = 0;
+  let scaleOpts = { scale: "linear", decades: 8 };
+  let last = null; // remembered so a scale change can repaint the same slice
 
   function updateSlice(axis, index) {
+    last = { axis, index };
     const { width, height, values } = extractSlice(volume, meta.shape, axis, index);
 
     // extractSlice runs along the plane's width axis first; a DataTexture wants
@@ -83,7 +87,7 @@ export function createSliceView(meta, volume, sceneRoot) {
         rowMajor[b * width + a] = values[a * height + b];
       }
     }
-    const rgba = valuesToRGBA(rowMajor, meta.vmin, meta.vmax);
+    const rgba = valuesToRGBA(rowMajor, meta.vmin, meta.vmax, scaleOpts);
 
     if (texture && width === texWidth && height === texHeight) {
       texture.image.data.set(rgba); // same dimensions: reuse the buffer
@@ -114,7 +118,21 @@ export function createSliceView(meta, volume, sceneRoot) {
     return plane;
   }
 
-  return { mesh, updateSlice, meta, get texture() { return texture; } };
+  /** Change the colour scaling and repaint the current slice in place. */
+  function setScale(opts) {
+    scaleOpts = { ...scaleOpts, ...opts };
+    if (last) updateSlice(last.axis, last.index);
+    return scaleOpts;
+  }
+
+  return {
+    mesh,
+    updateSlice,
+    setScale,
+    getScale: () => ({ ...scaleOpts }),
+    meta,
+    get texture() { return texture; },
+  };
 }
 
 /** Voxel indices for a point on the slice plane, given its UV. */
@@ -168,15 +186,43 @@ export function createColorbar(meta, doc = globalThis.document) {
   if (maxLabel) maxLabel.textContent = tag(meta.vmax);
   if (minLabel) minLabel.textContent = tag(meta.vmin);
 
-  // One ramp sample per row, top = vmax, via the same mapping as the plane.
-  const column = new Float32Array(height);
-  for (let row = 0; row < height; row++) {
-    column[row] = meta.vmax - ((meta.vmax - meta.vmin) * row) / (height - 1);
+  const scaleBox = doc.getElementById("colorbar-scale");
+  let opts = { scale: "linear", decades: 8 };
+
+  /**
+   * Decade tick labels for log mode, placed with the SHARED scalePosition, so
+   * a tick can never sit somewhere the image does not agree with.
+   */
+  function drawTicks() {
+    if (!scaleBox) return;
+    for (const old of [...(scaleBox.children ?? [])]) {
+      if (old.className === "cb-tick") old.remove?.();
+    }
+    if (opts.scale !== "log") return;
+
+    for (let d = 0; d <= opts.decades; d++) {
+      const value = meta.vmax * Math.pow(10, -d);
+      const t = scalePosition(value, meta.vmin, meta.vmax, opts);
+      const tick = doc.createElement("span");
+      tick.className = "cb-tick";
+      tick.style.top = `${(1 - t) * 100}%`;
+      tick.textContent = d === 0 ? `${meta.vmax}` : `1e-${d}`;
+      scaleBox.append(tick);
+    }
   }
-  const rgba = valuesToRGBA(column, meta.vmin, meta.vmax);
 
   function draw(hovered = null) {
     if (!ctx) return;
+    // One ramp sample per row, top = vmax, through the same mapping as the plane.
+    const column = new Float32Array(height);
+    for (let row = 0; row < height; row++) {
+      column[row] = meta.vmax - ((meta.vmax - meta.vmin) * row) / (height - 1);
+    }
+    const rgba =
+      opts.scale === "log"
+        ? logColumn(column, height)
+        : valuesToRGBA(column, meta.vmin, meta.vmax, opts);
+
     for (let row = 0; row < height; row++) {
       const [r, g, b] = rgba.slice(row * 4, row * 4 + 3);
       ctx.fillStyle = `rgb(${r},${g},${b})`;
@@ -184,8 +230,8 @@ export function createColorbar(meta, doc = globalThis.document) {
     }
     if (hovered === null) return;
 
-    // Triangular tick at the hovered value's position.
-    const t = rampPosition(hovered, meta.vmin, meta.vmax);
+    // Triangular tick at the hovered value's position, on the active scale.
+    const t = scalePosition(hovered, meta.vmin, meta.vmax, opts);
     const y = Math.round((1 - t) * (height - 1));
     ctx.fillStyle = "#fff";
     ctx.strokeStyle = "#000";
@@ -198,8 +244,33 @@ export function createColorbar(meta, doc = globalThis.document) {
     ctx.stroke();
   }
 
+  /**
+   * In log mode the bar itself must be uniform in ramp position, not in value,
+   * so each row is painted from its own normalised position.
+   */
+  function logColumn(_column, rows) {
+    const rgba = new Uint8Array(rows * 4);
+    for (let row = 0; row < rows; row++) {
+      const t = 1 - row / (rows - 1);
+      const [r, g, b] = rampRGB(t);
+      rgba[row * 4] = r;
+      rgba[row * 4 + 1] = g;
+      rgba[row * 4 + 2] = b;
+      rgba[row * 4 + 3] = 255;
+    }
+    return rgba;
+  }
+
+  function setScale(next) {
+    opts = { ...opts, ...next };
+    drawTicks();
+    draw();
+    return opts;
+  }
+
   draw();
-  return { draw, setTick: draw };
+  drawTicks();
+  return { draw, setTick: draw, setScale };
 }
 
 /**
@@ -406,6 +477,34 @@ export function buildIsoSurfaces(
   return meshes;
 }
 
+/**
+ * `count` contour levels across (vmin, vmax), linear or log spaced.
+ *
+ * Log spacing is what makes the weighting field legible: it spans ~39.5
+ * decades, so linear levels land almost entirely inside the top 1% of the
+ * range. Endpoints are excluded — a contour exactly at the extreme has nothing
+ * to separate.
+ */
+export function contourLevels(meta, count, opts = { scale: "linear", decades: 8 }) {
+  const n = Math.max(1, Math.floor(count));
+  const levels = [];
+
+  if (opts.scale === "log") {
+    const floor = meta.vmax * Math.pow(10, -opts.decades);
+    const logFloor = Math.log10(floor);
+    const logMax = Math.log10(meta.vmax);
+    for (let k = 1; k <= n; k++) {
+      levels.push(Math.pow(10, logFloor + ((logMax - logFloor) * k) / (n + 1)));
+    }
+    return levels;
+  }
+
+  for (let k = 1; k <= n; k++) {
+    levels.push(meta.vmin + ((meta.vmax - meta.vmin) * k) / (n + 1));
+  }
+  return levels;
+}
+
 /** Evenly spaced contour levels across (vmin, vmax), excluding the endpoints. */
 export function defaultContourLevels(meta, step = 1000) {
   if ((meta.units ?? "V") !== "V") return [...WEIGHT_CONTOUR_LEVELS];
@@ -424,108 +523,136 @@ export const WEIGHT_CONTOUR_LEVELS = [0.9, 0.75, 0.5, 0.25, 0.1, 0.05, 0.01];
 /**
  * Draw contour lines over the slice plane.
  *
- * Contours are placed with the SAME slicePlaneParams as the textured plane, so
- * the lines cannot drift away from the colour bands they trace. Each level is
- * nudged along the plane normal by a fraction of a voxel to stop it z-fighting
- * with the texture.
+ * ONE merged LineSegments holds every level, coloured per vertex by that level's
+ * ramp position. Step 10.15 used one object per level, which is fine for seven
+ * but not for the up-to-5000 levels Step 13.3 allows: 5000 levels is of the
+ * order of a million segments, and that many draw calls and DOM checkboxes
+ * would lock the page. Per-level checkboxes are therefore kept only while the
+ * count is small enough for them to be usable.
+ *
+ * Geometry is placed with the SAME slicePlaneParams as the textured plane, so
+ * lines cannot drift from the colour bands they trace, and nudged a fraction of
+ * one voxel along the normal to avoid z-fighting.
  */
+export const MAX_PER_LEVEL_CHECKBOXES = 24;
+
 export function createContourView(meta, volume, sceneRoot, doc = globalThis.document) {
   const group = new THREE.Group();
   group.name = "contourGroup";
   group.visible = false;
   sceneRoot.add(group);
 
+  const lines = new THREE.LineSegments(
+    new THREE.BufferGeometry(),
+    new THREE.LineBasicMaterial({ vertexColors: true }),
+  );
+  lines.name = "contourLines";
+  group.add(lines);
+
   const levelsPanel = doc.getElementById("contour-levels");
-  const legend = doc.getElementById("contour-legend");
 
   let levels = defaultContourLevels(meta);
-  const enabled = new Map(levels.map((level) => [level, true]));
-  const objects = new Map();
+  let enabled = new Map(levels.map((level) => [level, true]));
+  let scaleOpts = { scale: "linear", decades: 8 };
+  let last = null;
 
   const unit = (meta.units ?? "V") === "V" ? " V" : "";
-  const label = (level) => `${level}${unit}`;
+  const label = (level) =>
+    `${(meta.units ?? "V") === "V" ? level : level.toExponential(2)}${unit}`;
 
-  function colorFor(level) {
-    const [r, g, b] = rampRGB(rampPosition(level, meta.vmin, meta.vmax));
-    return new THREE.Color(`rgb(${r},${g},${b})`);
-  }
+  function rebuildCheckboxes() {
+    if (!levelsPanel) return;
+    levelsPanel.replaceChildren?.();
 
-  // One checkbox per level, plus a legend row naming value and unit.
-  for (const level of levels) {
-    const lines = new THREE.LineSegments(
-      new THREE.BufferGeometry(),
-      new THREE.LineBasicMaterial({ color: colorFor(level) }),
-    );
-    lines.name = `contour ${label(level)}`;
-    group.add(lines);
-    objects.set(level, lines);
-
-    if (levelsPanel) {
+    if (levels.length > MAX_PER_LEVEL_CHECKBOXES) {
+      const note = doc.createElement("div");
+      note.textContent = `${levels.length} levels — per-level toggles shown at ${MAX_PER_LEVEL_CHECKBOXES} or fewer`;
+      levelsPanel.append(note);
+      return;
+    }
+    for (const level of levels) {
       const row = doc.createElement("label");
       const box = doc.createElement("input");
       box.type = "checkbox";
-      box.checked = true;
+      box.checked = enabled.get(level) !== false;
       box.addEventListener("change", () => {
         enabled.set(level, box.checked);
-        lines.visible = box.checked;
+        if (last) update(last.axis, last.index);
       });
       row.append(box, ` ${label(level)}`);
       levelsPanel.append(row);
     }
-
-    if (legend) {
-      const row = doc.createElement("div");
-      const swatch = doc.createElement("span");
-      swatch.className = "contour-swatch";
-      swatch.style.background = `#${colorFor(level).getHexString()}`;
-      row.append(swatch, ` ${label(level)}`);
-      legend.append(row);
-    }
   }
 
-  /** Rebuild every enabled level for the given slice. */
+  /** Rebuild the merged buffer for the given slice. Returns the segment count. */
   function update(axis, index) {
+    last = { axis, index };
     const slice = extractSlice(volume, meta.shape, axis, index);
     const plane = slicePlaneParams(axis, index, meta);
 
-    // Offset along the normal by a fraction of ONE VOXEL: enough to clear the
-    // texture, too little to read as a gap. A voxel is stride[k] * spacing[k] on
-    // each axis, so the fraction stays consistent whatever the export strided.
+    const positions = [];
+    const colors = [];
+    const scratch = new THREE.Color();
+
+    for (const level of levels) {
+      if (enabled.get(level) === false) continue;
+      const segments = contourSegments(slice.values, slice.width, slice.height, level);
+      if (segments.length === 0) continue;
+
+      const t = scalePosition(level, meta.vmin, meta.vmax, scaleOpts);
+      const [r, g, b] = rampRGB(t);
+      scratch.setRGB(r / 255, g / 255, b / 255);
+
+      for (let n = 0; n < segments.length; n += 2) {
+        positions.push(
+          (segments[n] - 0.5) * plane.width,
+          (segments[n + 1] - 0.5) * plane.height,
+          0,
+        );
+        colors.push(scratch.r, scratch.g, scratch.b);
+      }
+    }
+
+    // Offset along the normal by a fraction of ONE VOXEL, which is
+    // stride[k] * spacing[k] on each axis.
     const [sx, sy, sz] = meta.spacing;
     const [tx, ty, tz] = metaStride(meta);
     const voxel = axis === "x" ? tx * sx : axis === "y" ? ty * sy : tz * sz;
-    const nudge = 0.02 * voxel;
     const normal = new THREE.Vector3(
       axis === "x" ? 1 : 0,
       axis === "y" ? 1 : 0,
       axis === "z" ? 1 : 0,
-    ).multiplyScalar(nudge);
+    ).multiplyScalar(0.02 * voxel);
 
-    for (const [level, lines] of objects) {
-      if (!enabled.get(level)) {
-        lines.visible = false;
-        continue;
-      }
-      const segments = contourSegments(slice.values, slice.width, slice.height, level);
+    lines.geometry.dispose(); // replaced wholesale; do not leak the old buffer
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      "position",
+      new THREE.BufferAttribute(new Float32Array(positions), 3),
+    );
+    geometry.setAttribute(
+      "color",
+      new THREE.BufferAttribute(new Float32Array(colors), 3),
+    );
+    lines.geometry = geometry;
 
-      // UV -> plane-local -> world, using the plane's own transform.
-      const positions = new Float32Array((segments.length / 2) * 3);
-      for (let n = 0; n < segments.length; n += 2) {
-        positions[(n / 2) * 3] = (segments[n] - 0.5) * plane.width;
-        positions[(n / 2) * 3 + 1] = (segments[n + 1] - 0.5) * plane.height;
-        positions[(n / 2) * 3 + 2] = 0;
-      }
+    lines.position.set(...plane.center).add(normal);
+    lines.rotation.set(...plane.rotation);
 
-      // Dispose the old buffer so repeated slider drags do not leak.
-      lines.geometry.dispose();
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-      lines.geometry = geometry;
+    return positions.length / 6; // two vertices per segment
+  }
 
-      lines.position.set(...plane.center).add(normal);
-      lines.rotation.set(...plane.rotation);
-      lines.visible = true;
-    }
+  /** Replace the level set, keeping the current slice. Returns segment count. */
+  function setLevels(next) {
+    levels = [...next];
+    enabled = new Map(levels.map((level) => [level, true]));
+    rebuildCheckboxes();
+    return last ? update(last.axis, last.index) : 0;
+  }
+
+  function setScale(opts) {
+    scaleOpts = { ...scaleOpts, ...opts };
+    if (last) update(last.axis, last.index);
   }
 
   // The group toggle lives here rather than in viewer.js so the contour layer
@@ -534,11 +661,12 @@ export function createContourView(meta, volume, sceneRoot, doc = globalThis.docu
   toggle?.addEventListener("click", () => {
     const on = toggle.getAttribute("aria-pressed") !== "true";
     toggle.setAttribute("aria-pressed", String(on));
-    toggle.classList.toggle("active", on);
+    toggle.classList?.toggle("active", on);
     group.visible = on;
   });
 
-  return { group, update, levels: () => [...levels] };
+  rebuildCheckboxes();
+  return { group, update, setLevels, setScale, levels: () => [...levels] };
 }
 
 /**
@@ -610,4 +738,97 @@ export function buildIsoLegend(meshes, doc = globalThis.document) {
     row.append(swatch, ` ${mesh.name.replace(/^iso /, "")}`);
     legend.append(row);
   }
+}
+
+/**
+ * Wire the colour-scale, decades and contour-count controls.
+ *
+ * `onLevels(levels)` is called with a fresh level set whenever the count or
+ * spacing changes; `onScale(opts)` whenever the image scaling changes.
+ *
+ * The count slider recomputes on "change" (pointer release), NOT "input": at
+ * 5000 levels a slice yields on the order of a million segments, and
+ * recomputing every drag tick would lock the page. A status line reports the
+ * segment count and elapsed time so the cost is visible rather than mysterious.
+ */
+export function wireScaleControls(meta, handlers = {}, doc = globalThis.document) {
+  const signed = meta.vmin < 0;
+  const buttons = {
+    linear: doc.getElementById("scale-linear"),
+    log: doc.getElementById("scale-log"),
+  };
+  const decadesRow = doc.getElementById("decades-row");
+  const decadesInput = doc.getElementById("log-decades");
+  const decadesLabel = doc.getElementById("log-decades-label");
+  const countInput = doc.getElementById("contour-count");
+  const countLabel = doc.getElementById("contour-count-label");
+  const status = doc.getElementById("contour-status");
+
+  // Log is meaningless on signed data and Step 13.2 throws on it, so the drift
+  // field gets the option disabled rather than a crash.
+  if (signed && buttons.log) {
+    buttons.log.disabled = true;
+    buttons.log.title =
+      "log scaling needs non-negative values (drift potential is -9500..0 V)";
+  }
+
+  // Weighting defaults to log — a linear ramp hides everything past the pad.
+  let scale = signed ? "linear" : "log";
+  let decades = Number(decadesInput?.value ?? 8);
+
+  const opts = () => ({ scale, decades });
+
+  function paintButtons() {
+    for (const [name, button] of Object.entries(buttons)) {
+      const on = name === scale;
+      button?.setAttribute("aria-pressed", String(on));
+      button?.classList?.toggle("active", on);
+    }
+    if (decadesRow) decadesRow.hidden = scale !== "log";
+    if (decadesLabel) {
+      decadesLabel.textContent = `${decades} (floor ${Math.pow(10, -decades).toExponential(1)} x max)`;
+    }
+  }
+
+  function emitLevels() {
+    const count = Number(countInput?.value ?? 200);
+    if (countLabel) countLabel.textContent = `${count} levels`;
+    if (status) status.textContent = "computing...";
+
+    const started = Date.now();
+    const levels = contourLevels(meta, count, opts());
+    const segments = handlers.onLevels?.(levels) ?? 0;
+    const elapsed = Date.now() - started;
+
+    const note = `${count} levels, ${segments} segments, ${elapsed} ms`;
+    if (status) status.textContent = note;
+    console.log(`contours: ${note}`);
+  }
+
+  function emitScale() {
+    paintButtons();
+    handlers.onScale?.(opts());
+    emitLevels(); // level placement follows the spacing
+  }
+
+  for (const [name, button] of Object.entries(buttons)) {
+    button?.addEventListener("click", () => {
+      if (button.disabled) return;
+      scale = name;
+      emitScale();
+    });
+  }
+
+  decadesInput?.addEventListener("input", () => {
+    decades = Number(decadesInput.value);
+    paintButtons(); // label tracks the drag
+  });
+  decadesInput?.addEventListener("change", emitScale);
+
+  // Debounced by design: release, not drag.
+  countInput?.addEventListener("change", emitLevels);
+  if (countLabel) countLabel.textContent = `${countInput?.value ?? 200} levels`;
+
+  paintButtons();
+  return { getScale: opts, refresh: emitScale, refreshLevels: emitLevels };
 }

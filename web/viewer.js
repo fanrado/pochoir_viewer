@@ -21,6 +21,7 @@ import {
   createContourView,
   createSliceView,
   fetchPotential,
+  wireScaleControls,
   wireSliceModes,
   uvToVoxel,
   voxelReading,
@@ -289,6 +290,7 @@ let potentialVolume = null;
 let potentialMeta = null;
 let colorbar = null;
 let sliceModes = null;
+let scaleControls = null;
 
 /** Payload URLs per field. Drift keeps the Phase 8 names. */
 const FIELD_FILES = {
@@ -360,6 +362,18 @@ function buildPotential(meta, volume) {
   sliceView.mesh.visible = pressed("layer-slice");
   contourView.group.visible = pressed("layer-contours");
   sliceModes = wireSliceModes(sliceView, contourView);
+
+  // Colour scale, decades and contour count. Log is the weighting default and
+  // is disabled for the signed drift potential.
+  scaleControls = wireScaleControls(meta, {
+    onScale: (opts) => {
+      sliceView.setScale(opts);
+      contourView.setScale(opts);
+      colorbar.setScale(opts);
+    },
+    onLevels: (levels) => contourView.setLevels(levels),
+  });
+  scaleControls.refresh();
 }
 
 function pressed(id) {
