@@ -17,6 +17,37 @@ The first command reads a pochoir OUTPUT directory and writes a single
 has no data-assembly logic of its own. Re-run it whenever the OUTPUT directory
 changes. Generated data under `web/data/` is deliberately not committed.
 
+### Install
+
+```bash
+pip install -r requirements.txt
+```
+
+Plain `export` needs **only numpy**. `scikit-image` is required *only* for
+`export-potential`, which uses marching cubes for the isosurfaces; the import is
+lazy, so everything else works without it installed.
+
+### Adding the potential view (optional)
+
+```bash
+python -m pochoir_viewer export-potential --root ../OUTPUT/store_largepix_wgrid --dest-dir web/data
+```
+
+This writes `potential.bin` (the raw float32 volume) and `potential.json`
+(metadata plus precomputed isosurface meshes) beside `scene.json`.
+
+| flag | meaning |
+| --- | --- |
+| `--zstride N` | keep every Nth z sample: **12.4 MB** at `--zstride 1`, **3.1 MB** at `--zstride 4` |
+| `--levels ...` | comma-separated equipotential levels in volts, default `-500,-2000,-4000,-6000,-8000` |
+
+Levels outside the data range are reported as skipped rather than failing, and
+the viewer states them in the panel.
+
+This step is **optional**. Without `potential.json` the viewer still runs
+normally with drift paths and boundary surfaces, and the two potential layer
+buttons render disabled with a tooltip naming the command above.
+
 ## Data assumptions
 
 The pochoir `.npz` files store bare arrays with no grid metadata, so the
@@ -63,7 +94,8 @@ under those directories and 9 are readable datasets.
 
 ## Requirements
 
-- Python with numpy, for the export step.
+- Python with numpy, for the export step; plus scikit-image if you also run
+  `export-potential` (see [Install](#install)).
 - **Network access at page load.** three.js is not vendored; `web/index.html`
   pins it via an import map to unpkg (`three@0.169.0`). The page will not
   render offline.
@@ -124,3 +156,47 @@ slab. None of the cube's actions move the pivot.
 
 Shortcuts stand down while a slider or button has focus, so arrow keys still
 adjust the focused control.
+
+## Layers
+
+The **view** button group at the top of the panel chooses what is on screen.
+All four are **independently toggleable** — showing drift paths over a potential
+slice is the point, not an accident.
+
+| button | shows |
+| --- | --- |
+| **Drift paths** | the 100 simulated electron trajectories |
+| **Potential slice** | one plane through the potential volume, plus its controls |
+| **Isosurfaces** | the precomputed equipotential sheets |
+| **Boundary** | the anode / grid / cathode surfaces |
+
+Toggling a layer never moves the camera or the pivot. The per-group boundary
+checkboxes still work as a sub-filter underneath the **Boundary** button.
+
+Drift paths and Boundary start on; the two potential layers start off and are
+disabled entirely if `potential.json` was never exported.
+
+### Reading the potential
+
+Turning on **Potential slice** reveals its controls:
+
+- **axis** — x, y, or z, selecting which way the plane cuts.
+- **slice slider** — moves the plane through the volume; its label names the
+  position, e.g. `z = 13.10 mm (index 131)`.
+- **colorbar** — the value scale, labelled with the actual data range from
+  `potential.json` (0 V at the top, -9500 V at the bottom for the reference
+  dataset). A tick marks the value currently under the cursor.
+- **voltage readout** — hovering the plane reports the voxel under the pointer
+  as `(2.20, 2.20, 13.10) mm = -2000.0 V`.
+
+The slice image uses nearest-neighbour sampling, so voxels stay honest rather
+than being smoothed into a prettier but invented gradient. As with the pivot
+readout, **the reported z is always true mm** — the z-compression setting and
+any `--zstride` are both undone before the number is shown.
+
+### A physics check you can see
+
+The **-2000 V isosurface coincides with the grid plane at z = 13.1 mm.** Turn on
+both **Isosurfaces** and **Boundary** and that sheet should sit flush with the
+grid surface. If it floats away from it, something in the export or the grid
+spacing is wrong — it is a free correctness check on the whole pipeline.
