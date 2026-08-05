@@ -20,6 +20,12 @@
 
   #scale-note { color: #555; }
 
+  #shortcuts { margin-top: 12px; border-top: 1px solid #ccc; padding-top: 8px; color: #444; }
+  #shortcuts kbd {
+    font: 11px monospace; background: #eee; border: 1px solid #bbb;
+    border-radius: 3px; padding: 0 3px;
+  }
+
   #readout {
     position: fixed; bottom: 12px; left: 12px; padding: 8px 10px; min-height: 1em;
     background: rgba(255, 255, 255, 0.92); border-radius: 6px; white-space: pre;
@@ -53,6 +59,14 @@
 
   <div id="pivot-readout"></div>
   <button id="center-domain">center on domain</button>
+
+  <div id="shortcuts">
+    <b>keys</b>
+    <div><kbd>1</kbd>–<kbd>6</kbd> axis views (±X, ±Y, ±Z)</div>
+    <div><kbd>F</kbd> pivot to geometry under cursor</div>
+    <div><kbd>C</kbd> center on domain</div>
+    <div><kbd>R</kbd> reset view</div>
+  </div>
 </div>
 
 <div id="readout"></div>

@@ -11,6 +11,7 @@ import {
   recenterOn,
   updatePivot,
   updatePivotReadout,
+  enableKeyboardShortcuts,
 } from "./nav.js";
 import { createViewCube, enableViewCubePicking } from "./viewcube.js";
 
@@ -173,7 +174,7 @@ const viewCube = createViewCube(renderer, camera);
 
 // setFromObject picks up sceneRoot's live z scale, so canonical views frame
 // the compressed geometry the user is actually looking at.
-enableViewCubePicking(viewCube, renderer, camera, controls, () =>
+const cubePick = enableViewCubePicking(viewCube, renderer, camera, controls, () =>
   new THREE.Box3().setFromObject(sceneRoot),
 );
 
@@ -209,11 +210,10 @@ window.addEventListener("pointermove", (event) => {
     `dz ${trim(s.z_travel)} mm, ${s.n_steps} steps`;
 });
 
-// The box center is ~75 mm from the anode region worth inspecting, so let the
-// user put the pivot on whatever they double-click.
-canvas.addEventListener("dblclick", (event) => {
-  pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
-  pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
+/** Move the pivot to the geometry under a screen position, if any. */
+function pivotUnderCursor(clientX, clientY) {
+  pointer.x = (clientX / window.innerWidth) * 2 - 1;
+  pointer.y = -(clientY / window.innerHeight) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
 
   const hits = raycaster.intersectObjects(
@@ -221,6 +221,19 @@ canvas.addEventListener("dblclick", (event) => {
     false,
   );
   if (hits.length > 0) recenterOn(hits[0].point, camera, controls);
+}
+
+// The box center is ~75 mm from the anode region worth inspecting, so let the
+// user put the pivot on whatever they double-click.
+canvas.addEventListener("dblclick", (event) => {
+  pivotUnderCursor(event.clientX, event.clientY);
+});
+
+enableKeyboardShortcuts({
+  axisView: (dir) => cubePick.goTo(dir),
+  pivotUnderCursor,
+  centerOnDomain: () => recenterOn(domainCenter(), camera, controls),
+  resetView: frameView,
 });
 
 window.addEventListener("resize", () => {

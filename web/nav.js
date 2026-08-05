@@ -46,6 +46,62 @@ export function updatePivotReadout(element, controls, sceneRoot) {
     ` - double-click geometry to move it`;
 }
 
+/** Keys 1..6 map to the axis views in the view cube's face order. */
+const AXIS_KEYS = {
+  1: [1, 0, 0],
+  2: [-1, 0, 0],
+  3: [0, 1, 0],
+  4: [0, -1, 0],
+  5: [0, 0, 1],
+  6: [0, 0, -1],
+};
+
+/** Tags whose own key handling must win over these shortcuts. */
+const TYPING_TAGS = new Set(["INPUT", "BUTTON", "SELECT"]);
+
+/**
+ * Bind the viewer's keyboard shortcuts.
+ *
+ * `handlers.axisView` receives a unit THREE.Vector3; the others take no
+ * arguments. `handlers.pivotUnderCursor` receives the last known pointer
+ * position, so F acts on whatever the cursor is over.
+ */
+export function enableKeyboardShortcuts(handlers, target = window) {
+  const cursor = { x: 0, y: 0, seen: false };
+
+  target.addEventListener("pointermove", (event) => {
+    cursor.x = event.clientX;
+    cursor.y = event.clientY;
+    cursor.seen = true;
+  });
+
+  target.addEventListener("keydown", (event) => {
+    // Never hijack a focused slider: arrow keys and Home/End belong to it.
+    if (TYPING_TAGS.has(document.activeElement?.tagName)) return;
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+
+    const axis = AXIS_KEYS[event.key];
+    if (axis) {
+      handlers.axisView?.(new THREE.Vector3(...axis));
+      return;
+    }
+
+    switch (event.key.toLowerCase()) {
+      case "f":
+        if (cursor.seen) handlers.pivotUnderCursor?.(cursor.x, cursor.y);
+        break;
+      case "c":
+        handlers.centerOnDomain?.();
+        break;
+      case "r":
+        handlers.resetView?.();
+        break;
+      default:
+        return; // leave every other key alone
+    }
+  });
+}
+
 const easeOut = (t) => 1 - (1 - t) ** 3;
 
 /**
