@@ -21,6 +21,13 @@ const FACES = [
 
 const BASE_COLOR = "#3d4757";
 
+/** Index into FACES (and so into the material array) for an axis direction. */
+function faceIndexFor(x, y, z) {
+  if (x !== 0) return x > 0 ? 0 : 1;
+  if (y !== 0) return y > 0 ? 2 : 3;
+  return z > 0 ? 4 : 5;
+}
+
 function labelTexture(label) {
   const px = 128;
   const canvas = document.createElement("canvas");
@@ -64,7 +71,34 @@ export function createViewCube(renderer, mainCamera) {
   camera.position.set(0, 0, 3);
   camera.lookAt(0, 0, 0);
 
+  // 26 invisible pick helpers: 6 faces, 12 edges, 8 corners. Each carries the
+  // unit direction the main camera should move to.
   const pickables = [];
+  const pickMaterial = new THREE.MeshBasicMaterial({ visible: false });
+
+  for (let x = -1; x <= 1; x++) {
+    for (let y = -1; y <= 1; y++) {
+      for (let z = -1; z <= 1; z++) {
+        const rank = Math.abs(x) + Math.abs(y) + Math.abs(z);
+        if (rank === 0) continue; // the cube's own center is not pickable
+
+        // Faces get a broad pad; edges and corners smaller ones, so a face
+        // click near an edge still reads as the face.
+        const span = [0, 0.5, 0.3, 0.24][rank];
+        const size = (v) => (v === 0 ? 0.62 : span);
+
+        const helper = new THREE.Mesh(
+          new THREE.BoxGeometry(size(x), size(y), size(z)),
+          pickMaterial,
+        );
+        helper.position.set(x * 0.5, y * 0.5, z * 0.5);
+        helper.userData.dir = new THREE.Vector3(x, y, z).normalize();
+        helper.userData.faceIndex = rank === 1 ? faceIndexFor(x, y, z) : -1;
+        cube.add(helper);
+        pickables.push(helper);
+      }
+    }
+  }
 
   let rect = { left: 0, top: 0, width: SIZE_PX, height: SIZE_PX, x: 0, y: 0 };
 
@@ -102,4 +136,115 @@ export function createViewCube(renderer, mainCamera) {
   }
 
   return { scene, camera, cube, pickables, getRect, render, onResize, materials };
+}
+
+const easeOut = (t) => 1 - (1 - t) ** 3;
+
+/**
+ * Distance along `dir` at which `box` exactly fits the camera frustum.
+ *
+ * The box must already carry sceneRoot's z scale, so a +Z view fits the
+ * 4.4 x 4.4 mm pad plane while a +X view fits the tall 4.4 x 16.0 mm slab.
+ */
+export function fitDistance(box, dir, camera, margin = 1.06) {
+  const up = Math.abs(dir.z) > 0.99 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, 1);
+  const right = new THREE.Vector3().crossVectors(up, dir).normalize();
+  const viewUp = new THREE.Vector3().crossVectors(dir, right).normalize();
+
+  const center = box.getCenter(new THREE.Vector3());
+  const min = box.min;
+  const max = box.max;
+
+  let halfW = 0;
+  let halfH = 0;
+  let halfD = 0;
+  const corner = new THREE.Vector3();
+  for (const cx of [min.x, max.x]) {
+    for (const cy of [min.y, max.y]) {
+      for (const cz of [min.z, max.z]) {
+        corner.set(cx, cy, cz).sub(center);
+        halfW = Math.max(halfW, Math.abs(corner.dot(right)));
+        halfH = Math.max(halfH, Math.abs(corner.dot(viewUp)));
+        halfD = Math.max(halfD, Math.abs(corner.dot(dir)));
+      }
+    }
+  }
+
+  const tan = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
+  const forHeight = halfH / tan;
+  const forWidth = halfW / (tan * camera.aspect);
+  return (Math.max(forHeight, forWidth) + halfD) * margin;
+}
+
+/**
+ * Make the cube clickable: faces, edges and corners jump the main camera to
+ * canonical views. controls.target never moves.
+ */
+export function enableViewCubePicking(gizmo, renderer, mainCamera, controls, getScaledBox) {
+  const raycaster = new THREE.Raycaster();
+  const ndc = new THREE.Vector2();
+  let highlighted = -1;
+
+  /** Gizmo-viewport NDC — NOT canvas NDC, which is the classic bug here. */
+  function toGizmoNdc(event) {
+    const rect = gizmo.getRect();
+    ndc.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    ndc.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    return ndc;
+  }
+
+  function insideRect(event) {
+    const rect = gizmo.getRect();
+    return (
+      event.clientX >= rect.left &&
+      event.clientX <= rect.left + rect.width &&
+      event.clientY >= rect.top &&
+      event.clientY <= rect.top + rect.height
+    );
+  }
+
+  function pick(event) {
+    raycaster.setFromCamera(toGizmoNdc(event), gizmo.camera);
+    return raycaster.intersectObjects(gizmo.pickables, false)[0]?.object ?? null;
+  }
+
+  function setHighlight(faceIndex) {
+    if (faceIndex === highlighted) return;
+    if (highlighted >= 0) gizmo.materials[highlighted].color.setHex(0xffffff);
+    if (faceIndex >= 0) gizmo.materials[faceIndex].color.setHex(0x9fc4ff);
+    highlighted = faceIndex;
+  }
+
+  /** Glide the main camera to `dir`, leaving the pivot alone. */
+  function goTo(dir, ms = 400) {
+    const from = mainCamera.position.clone();
+    const distance = fitDistance(getScaledBox(), dir, mainCamera);
+    const to = controls.target.clone().addScaledVector(dir, distance);
+    let started = null;
+
+    function step(now) {
+      started ??= now;
+      const t = ms > 0 ? Math.min((now - started) / ms, 1) : 1;
+      mainCamera.position.lerpVectors(from, to, easeOut(t));
+      mainCamera.lookAt(controls.target);
+      controls.update();
+      if (t < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  }
+
+  renderer.domElement.addEventListener("pointermove", (event) => {
+    if (!insideRect(event)) return setHighlight(-1);
+    setHighlight(pick(event)?.userData.faceIndex ?? -1);
+  });
+
+  renderer.domElement.addEventListener("pointerleave", () => setHighlight(-1));
+
+  renderer.domElement.addEventListener("pointerdown", (event) => {
+    if (!insideRect(event)) return;
+    const hit = pick(event);
+    if (hit) goTo(hit.userData.dir.clone());
+  });
+
+  return { goTo, insideRect };
 }

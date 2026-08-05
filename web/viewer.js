@@ -12,7 +12,7 @@ import {
   updatePivot,
   updatePivotReadout,
 } from "./nav.js";
-import { createViewCube } from "./viewcube.js";
+import { createViewCube, enableViewCubePicking } from "./viewcube.js";
 
 const scene_data = await (await fetch("data/scene.json")).json();
 console.log(scene_data.meta);
@@ -170,6 +170,12 @@ const pivotReadout = document.getElementById("pivot-readout");
 
 // Orientation gizmo. Takes over clearing, so the main pass clears explicitly.
 const viewCube = createViewCube(renderer, camera);
+
+// setFromObject picks up sceneRoot's live z scale, so canonical views frame
+// the compressed geometry the user is actually looking at.
+enableViewCubePicking(viewCube, renderer, camera, controls, () =>
+  new THREE.Box3().setFromObject(sceneRoot),
+);
 
 // Hover a trajectory to identify it, so the bundle is inspectable rather than
 // decorative.
