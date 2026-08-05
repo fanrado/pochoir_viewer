@@ -23,9 +23,7 @@ changes. Generated data under `web/data/` is deliberately not committed.
 pip install -r requirements.txt
 ```
 
-Plain `export` needs **only numpy**. `scikit-image` is required *only* for
-`export-potential`, which uses marching cubes for the isosurfaces; the import is
-lazy, so everything else works without it installed.
+Both subcommands need **only numpy**.
 
 ### Adding the potential view (optional)
 
@@ -34,19 +32,23 @@ python -m pochoir_viewer export-potential --root ../OUTPUT/store_largepix_wgrid 
 ```
 
 This writes `potential.bin` (the raw float32 volume) and `potential.json`
-(metadata plus precomputed isosurface meshes) beside `scene.json`.
+(metadata only, well under a kilobyte) beside `scene.json`. On the reference
+dataset the JSON is **181 bytes** for drift and **251 bytes** for weight; all the
+bulk is in the `.bin` (12.4 MB and 38.8 MB respectively).
+
+Earlier versions also precomputed equipotential isosurface meshes into that
+JSON, which made it 0.62 MB and 3.68 MB. The isosurfaces were removed, so **if
+you have an old `web/data` and an open browser tab, hard-reload it** — a cached
+payload carrying the old key still loads, but it is much larger than it needs to
+be.
 
 | flag | meaning |
 | --- | --- |
 | `--zstride N` | keep every Nth z sample: **12.4 MB** at `--zstride 1`, **3.1 MB** at `--zstride 4` |
-| `--levels ...` | comma-separated equipotential levels in volts, default `-500,-2000,-4000,-6000,-8000` |
-
-Levels outside the data range are reported as skipped rather than failing, and
-the viewer states them in the panel.
 
 This step is **optional**. Without `potential.json` the viewer still runs
-normally with drift paths and boundary surfaces, and the two potential layer
-buttons render disabled with a tooltip naming the command above.
+normally with drift paths and boundary surfaces, and the **Potential slice**
+layer button renders disabled with a tooltip naming the command above.
 
 ## Data assumptions
 
@@ -113,8 +115,7 @@ python -c "from pochoir_viewer.io import list_datasets; print(len(list_datasets(
 
 ## Requirements
 
-- Python with numpy, for the export step; plus scikit-image if you also run
-  `export-potential` (see [Install](#install)).
+- Python with numpy, for the export steps (see [Install](#install)).
 - **Network access at page load.** three.js is not vendored; `web/index.html`
   pins it via an import map to unpkg (`three@0.169.0`). The page will not
   render offline.
@@ -186,13 +187,12 @@ slice is the point, not an accident.
 | --- | --- |
 | **Drift paths** | the 100 simulated electron trajectories |
 | **Potential slice** | one plane through the potential volume, plus its controls |
-| **Isosurfaces** | the precomputed equipotential sheets |
 | **Boundary** | the anode / grid / cathode surfaces |
 
 Toggling a layer never moves the camera or the pivot. The per-group boundary
 checkboxes still work as a sub-filter underneath the **Boundary** button.
 
-Drift paths and Boundary start on; the two potential layers start off and are
+Drift paths and Boundary start on; **Potential slice** starts off and is
 disabled entirely if `potential.json` was never exported.
 
 ### Reading the potential
@@ -215,10 +215,11 @@ any `--zstride` are both undone before the number is shown.
 
 ### A physics check you can see
 
-The **-2000 V isosurface coincides with the grid plane at z = 13.1 mm.** Turn on
-both **Isosurfaces** and **Boundary** and that sheet should sit flush with the
-grid surface. If it floats away from it, something in the export or the grid
-spacing is wrong — it is a free correctness check on the whole pipeline.
+The **-2000 V contour coincides with the grid plane at z = 13.1 mm.** Put the
+slice on an x or y axis, turn on **Boundary**, and that contour should cross the
+grid surface where the two meet. If it lands somewhere else, something in the
+export or the grid spacing is wrong — it is a free correctness check on the
+whole pipeline.
 
 ## The weighting field
 
@@ -246,7 +247,7 @@ and `potential_weight.json`, so both fields can sit in `web/data` at once.
 
 At full float32 resolution the weighting potential is **310 MB**, too much to
 hand a browser, so `--field weight` defaults to `--stride 2,2,2` — a **38.8 MB**
-volume plus about 3.7 MB of isosurface meshes, with **no default crop**. See
+volume, with **no default crop**. See
 [Seeing the whole weighting field](#seeing-the-whole-weighting-field) for the
 size trade-offs and why striding is preferred to cropping.
 
@@ -277,12 +278,11 @@ crop at z 300 discards 0.76% of it; `--zmax 600` discards 0.0001%.
 - **Units are dimensionless.** The weighting potential runs 0..1, so the
   colorbar, the hover readout and the contour legend all drop the volt suffix.
   Nothing in the UI hardcodes volts; it all reads the exported units.
-- **The 3D view is nested shells.** The isosurfaces run 0.9, 0.75, 0.5, 0.25,
-  0.1, 0.05, 0.01 — deliberately log-ish, since the potential falls off fast
-  (1.0 at the pad, 0.115 at the grid, 0.0025 by z = 150). Each level is a closed
-  **shell wrapping a pad**, not a flat sheet above it: the potential is 1.0 only
-  on the pad itself and falls away in every direction, so the 0.5 shell spans
-  z 8.4-11.2 mm, straddling the pad plane at 9.8-10.0 mm.
+- **The field falls off fast**, so log contour spacing is the default here:
+  1.0 at the pad, 0.115 at the grid, 0.0025 by z = 150. The potential is 1.0
+  only on the pad itself and falls away in every direction, so on an x- or
+  y-slice the high levels close around the pad plane at 9.8-10.0 mm rather than
+  lying flat above it.
 
 ### Slices and contours
 
@@ -325,23 +325,6 @@ python -m pochoir_viewer export-potential --root ... --dest-dir web/data --field
 Earlier versions wrote `potential.bin` for **both** fields, so exporting one
 silently destroyed the other and only the last export was present. If you have
 a `web/data` from before that fix, re-run both exports.
-
-### Isosurface appearance
-
-Shell colours come from a fixed bright palette — magenta, orange, yellow,
-green, cyan, blue, violet, running from the innermost (highest) level outwards.
-
-**These deliberately do not match the colorbar.** Tying them to the ramp is what
-the viewer used to do, and it made every shell muddy, because low weighting
-values sit at the dark end of the ramp and the outer shells are exactly the low
-values. The colorbar still governs **the slice image**; the shells get their own
-palette, and the legend carries a swatch per level so a colour is still readable
-as a value. Shells are drawn outermost-first so the nested translucency blends
-correctly where they cross the pad and grid planes.
-
-The **isosurface opacity** slider sets all shells at once. At 100% they switch
-to genuine solid rendering rather than fully-opaque transparency, which would
-otherwise sort incorrectly. The setting survives slice, axis and field changes.
 
 ### Slice display modes
 
