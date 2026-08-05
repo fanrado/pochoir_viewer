@@ -65,8 +65,20 @@ const TYPING_TAGS = new Set(["INPUT", "BUTTON", "SELECT"]);
  * `handlers.axisView` receives a unit THREE.Vector3; the others take no
  * arguments. `handlers.pivotUnderCursor` receives the last known pointer
  * position, so F acts on whatever the cursor is over.
+ *
+ * `target` defaults to the window. Outside a browser there is none, so it must
+ * be passed explicitly; binding to nothing is a programming error rather than
+ * something to silently ignore, since a caller that forgot it would appear to
+ * work while no shortcut ever fired.
  */
-export function enableKeyboardShortcuts(handlers, target = window) {
+export function enableKeyboardShortcuts(handlers, target = globalThis.window) {
+  if (!target?.addEventListener) {
+    throw new TypeError(
+      "enableKeyboardShortcuts needs an event target: there is no global " +
+        "window here, so pass one explicitly",
+    );
+  }
+
   const cursor = { x: 0, y: 0, seen: false };
 
   target.addEventListener("pointermove", (event) => {
@@ -77,7 +89,8 @@ export function enableKeyboardShortcuts(handlers, target = window) {
 
   target.addEventListener("keydown", (event) => {
     // Never hijack a focused slider: arrow keys and Home/End belong to it.
-    if (TYPING_TAGS.has(document.activeElement?.tagName)) return;
+    // globalThis.document, not a bare document: this module is imported under node.
+    if (TYPING_TAGS.has(globalThis.document?.activeElement?.tagName)) return;
     if (event.ctrlKey || event.metaKey || event.altKey) return;
 
     const axis = AXIS_KEYS[event.key];
