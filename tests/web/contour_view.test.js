@@ -180,45 +180,74 @@ test("the contour group joins sceneRoot and starts hidden", () => {
   assert.equal(view.group.visible, false);
 });
 
-test("one LineSegments per default level", () => {
+test("all levels share ONE LineSegments with per-vertex colours", () => {
+  // UPDATED for 77e24c4: the per-level-mesh design became a single buffer, so
+  // the levels slider can reach thousands of levels without thousands of draw
+  // calls. Colour now rides on the vertices rather than on the material.
   const { view } = rig();
 
-  const expected = defaultContourLevels(meta(), 1000).length;
-  assert.equal(view.group.children.length, expected);
-  for (const child of view.group.children) {
-    assert.ok(child instanceof THREE.LineSegments);
-  }
+  assert.equal(view.group.children.length, 1);
+  const [lines] = view.group.children;
+  assert.ok(lines instanceof THREE.LineSegments);
+  assert.equal(lines.material.vertexColors, true);
 });
 
-test("each line object is named with its level and unit", () => {
+test("the shared line object is named for what it is", () => {
   const { view } = rig();
 
-  assert.ok(view.group.children.some((c) => c.name === "contour -4000 V"));
+  assert.equal(view.group.children[0].name, "contourLines");
+});
+
+test("the level list is still reported", () => {
+  const { view } = rig();
+
+  assert.deepEqual(view.levels(), defaultContourLevels(meta(), 1000));
+});
+
+test("levels() returns a copy", () => {
+  const { view } = rig();
+  view.levels().push(-999);
+
+  assert.ok(!view.levels().includes(-999));
+});
+
+test("the checkbox labels carry the level and unit", () => {
+  // UPDATED for 77e24c4: names moved from per-level meshes onto the panel rows.
+  const { doc } = rig();
+
+  const texts = doc.created.flatMap((el) => el.children ?? []).filter((c) => typeof c === "string");
+  assert.ok(texts.some((t) => t.includes("-4000") && t.includes("V")), texts.join("|"));
 });
 
 test("a dimensionless field drops the volt suffix", () => {
-  const { view } = rig({ units: "dimensionless", vmin: 0, vmax: 1 });
+  const { doc } = rig({ units: "dimensionless", vmin: 0, vmax: 1 });
 
-  for (const child of view.group.children) {
-    assert.ok(!child.name.includes(" V"), child.name);
-  }
+  const texts = doc.created.flatMap((el) => el.children ?? []).filter((c) => typeof c === "string");
+  assert.ok(texts.length > 0);
+  for (const t of texts) assert.ok(!t.includes(" V"), t);
 });
 
-test("line colour comes from the shared ramp", () => {
-  // A contour must match the colour band it traces.
+test("line colour comes from the shared ramp, now per vertex", () => {
+  // A contour must still match the colour band it traces; the mechanism moved
+  // from one material per level to a colour attribute on the shared buffer.
   const { view } = rig();
+  view.update("z", 3);
 
-  const colours = view.group.children.map((c) => c.material.color.getHex());
-  assert.equal(new Set(colours).size, colours.length, "levels share a colour");
+  const colour = view.group.children[0].geometry.getAttribute("color");
+  assert.ok(colour, "no colour attribute");
+  assert.equal(colour.itemSize, 3);
+  const seen = new Set();
+  for (let n = 0; n < colour.count; n++) {
+    seen.add([colour.getX(n), colour.getY(n), colour.getZ(n)].join(","));
+  }
+  assert.ok(seen.size > 1, "every vertex is the same colour");
 });
 
-test("a checkbox and a legend row per level", () => {
+test("a checkbox per level while the count is small", () => {
   const { view, doc } = rig();
 
   const boxes = doc.created.filter((el) => el.type === "checkbox");
-  const swatches = doc.created.filter((el) => el.className === "contour-swatch");
-  assert.equal(boxes.length, view.group.children.length);
-  assert.equal(swatches.length, view.group.children.length);
+  assert.equal(boxes.length, view.levels().length);
 });
 
 test("checkboxes start checked", () => {
@@ -227,14 +256,31 @@ test("checkboxes start checked", () => {
   assert.ok(doc.created.filter((el) => el.type === "checkbox").every((el) => el.checked));
 });
 
-test("unchecking a level hides its lines", () => {
+test("unchecking a contributing level drops its segments from the buffer", () => {
+  // UPDATED for 77e24c4: with one shared buffer a disabled level is omitted at
+  // rebuild rather than having its own mesh hidden. Not every level crosses a
+  // given slice, so disable them one at a time until one that does is found —
+  // asserting on an arbitrary checkbox would pass or fail by luck.
   const { view, doc } = rig();
+  const count = () =>
+    view.group.children[0].geometry.getAttribute("position")?.count ?? 0;
 
-  const box = doc.created.find((el) => el.type === "checkbox");
-  box.checked = false;
-  box.fire("change");
+  view.update("z", 3);
+  const before = count();
+  assert.ok(before > 0, "no contour geometry to start from");
 
-  assert.equal(view.group.children[0].visible, false);
+  let dropped = false;
+  for (const box of doc.created.filter((el) => el.type === "checkbox")) {
+    const previous = count();
+    box.checked = false;
+    box.fire("change");
+    view.update("z", 3);
+    if (count() < previous) {
+      dropped = true;
+      break;
+    }
+  }
+  assert.ok(dropped, "no level ever reduced the buffer");
 });
 
 test("the view survives a missing panel and legend", () => {
@@ -341,15 +387,17 @@ test("update on each axis places contours on that axis's plane", () => {
   }
 });
 
-test("a disabled level builds no geometry on update", () => {
+test("disabling every level empties the buffer", () => {
   const { view, doc } = rig();
 
-  const box = doc.created.find((el) => el.type === "checkbox");
-  box.checked = false;
-  box.fire("change");
+  for (const box of doc.created.filter((el) => el.type === "checkbox")) {
+    box.checked = false;
+    box.fire("change");
+  }
   view.update("z", 3);
 
-  assert.equal(view.group.children[0].visible, false);
+  const attr = view.group.children[0].geometry.getAttribute("position");
+  assert.ok(!attr || attr.count === 0);
 });
 
 test("repeated updates do not accumulate objects", () => {
@@ -410,11 +458,13 @@ test("a meta with no units is treated as volts", () => {
   assert.notDeepEqual(levels, WEIGHT_CONTOUR_LEVELS);
 });
 
-test("a unitless meta keeps the volt suffix on contour names", () => {
+test("a unitless meta keeps the volt suffix on the panel labels", () => {
   const bare = { shape: SHAPE, spacing: [0.1, 0.1, 0.1], origin: [0, 0, 0], vmin: -8000, vmax: 0, zstride: 1 };
-  const sceneRoot = new THREE.Group();
+  const doc = fakeDoc({ "contour-levels": fakeElement() });
 
-  const view = createContourView(bare, rampVolume(), sceneRoot, fakeDoc());
+  createContourView(bare, rampVolume(), new THREE.Group(), doc);
 
-  assert.ok(view.group.children.every((c) => c.name.endsWith(" V")));
+  const texts = doc.created.flatMap((el) => el.children ?? []).filter((c) => typeof c === "string");
+  assert.ok(texts.length > 0);
+  assert.ok(texts.some((t) => t.includes(" V")), texts.join("|"));
 });
