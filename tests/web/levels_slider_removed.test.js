@@ -19,11 +19,13 @@ import { CONTOUR_LEVEL_COUNT, contourLevels } from "../../web/potential_view.js"
 const WEB_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "web");
 const html = () => readFileSync(join(WEB_DIR, "index.html"), "utf8");
 
-const REMOVED_IDS = ["contour-count", "contour-count-label"];
+// The levels slider (17dfac7) and the per-level checkbox panel it fed
+// (af737a4) -- one removal thread, so they are pinned together.
+const REMOVED_IDS = ["contour-count", "contour-count-label", "contour-levels"];
 
 // --- the markup is gone -----------------------------------------------------
 
-test("the levels slider ids are absent from index.html", () => {
+test("the removed contour-panel ids are absent from index.html", () => {
   const still = REMOVED_IDS.filter((id) => html().includes(`id="${id}"`));
   assert.deepEqual(still, [], `index.html still declares: ${still.join(", ")}`);
 });
@@ -32,9 +34,16 @@ test("no label still points at the removed slider", () => {
   assert.doesNotMatch(html(), /for="contour-count"/);
 });
 
+test("the #contour-levels styling hook went with the element", () => {
+  // A rule for a deleted id is dead CSS that makes the element look alive.
+  assert.doesNotMatch(html(), /#contour-levels\b/);
+});
+
 test("the surrounding contour panel survived the removal", () => {
   // Guards against an over-broad delete taking the neighbouring readouts.
-  for (const id of ["contour-status", "contour-levels", "contour-legend", "log-decades"]) {
+  // #contour-levels is NOT in this list: af737a4 removed it too, with the
+  // per-level checkboxes it held.
+  for (const id of ["contour-status", "contour-legend", "log-decades"]) {
     assert.ok(html().includes(`id="${id}"`), `removal also dropped id="${id}"`);
   }
 });

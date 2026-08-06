@@ -107,10 +107,9 @@ function fakeElement(tag = "div") {
     addEventListener(t, fn) { (this.handlers[t] ??= []).push(fn); },
     fire(t) { for (const fn of this.handlers[t] ?? []) fn(); },
     append(...kids) { this.children.push(...kids); },
-    // rebuildCheckboxes clears the panel with `replaceChildren?.()`. A stub
-    // without it is silently skipped by the optional call, and every rebuild
-    // would appear to APPEND — so a mode switch would look like it left the old
-    // checkboxes in place. The real DOM has this method; the stub must too.
+    // The legend is cleared with `replaceChildren?.()`. A stub without it is
+    // silently skipped by the optional call, so a rebuild would appear to
+    // APPEND. The real DOM has this method; the stub must too.
     replaceChildren(...kids) { this.children = [...kids]; },
   };
 }
@@ -132,13 +131,13 @@ function fakeDoc(elements = {}) {
 }
 
 /** A contour view with the scaling buttons present. */
-function rig(m, volume) {
+function rig(m, volume, extra = {}) {
   const elements = {
-    "contour-levels": makeElement(),
     "contour-legend": makeElement(),
     "layer-contours": makeElement("button"),
     "scaling-global": makeElement("button"),
     "scaling-slice": makeElement("button"),
+    ...extra,
   };
   const doc = fakeDoc(elements);
   const sceneRoot = new THREE.Group();
@@ -384,60 +383,48 @@ test("clicking a scaling button switches the mode", () => {
 test("the view constructs when the scaling buttons are absent", () => {
   // Every DOM lookup is optional-chained; a page without the buttons must not
   // throw, or the whole potential layer dies.
-  const doc = fakeDoc({ "contour-levels": makeElement() });
+  const doc = fakeDoc({});
 
   assert.doesNotThrow(() => {
     createContourView(weightMeta(), weightVolume(), new THREE.Group(), doc);
   });
 });
 
-// --- the levels panel in per-slice mode -------------------------------------
+// --- the levels panel is gone -----------------------------------------------
 
-/** Text content of everything appended to the levels panel. */
-function panelText(elements) {
-  return elements["contour-levels"].children
-    .map((c) => (typeof c === "string" ? c : c.textContent ?? ""))
-    .join("|");
-}
+test("no levels panel is built, and its absence is not fatal", () => {
+  // 46a8cc5 dropped the per-level checkboxes and af737a4 dropped the
+  // #contour-levels div that held them. A document without the div must still
+  // construct, and a document that happens to still have one must be left
+  // untouched rather than repopulated.
+  const stray = makeElement();
+  const doc = fakeDoc({ "contour-levels": stray });
 
-test("per-slice mode says the levels are re-placed instead of offering toggles", () => {
-  const { elements } = rig(weightMeta(), weightVolume());
-
-  assert.match(panelText(elements), /per slice/);
+  assert.doesNotThrow(() => {
+    createContourView(weightMeta(), weightVolume(), new THREE.Group(), doc);
+  });
+  assert.deepEqual(stray.children, [], "something still writes to the levels panel");
 });
 
-test("per-slice mode offers no per-level checkboxes", () => {
-  // A fixed checkbox cannot name a level that survives a scrub.
-  const { elements } = rig(weightMeta(), weightVolume());
-
-  const boxes = elements["contour-levels"].children.flatMap((row) =>
-    (row.children ?? []).filter((c) => c.type === "checkbox"),
-  );
-  assert.deepEqual(boxes, []);
-});
-
-test("switching to global restores the per-level checkboxes", () => {
-  const { view, elements } = rig(weightMeta(), weightVolume());
+test("switching scaling mode does not repopulate a stray levels panel", () => {
+  // rebuildCheckboxes used to run on every setScaling; nothing should now.
+  const stray = makeElement();
+  const { view } = rig(weightMeta(), weightVolume(), { "contour-levels": stray });
 
   view.setScaling("global");
-
-  const boxes = elements["contour-levels"].children.flatMap((row) =>
-    (row.children ?? []).filter((c) => c.type === "checkbox"),
-  );
-  assert.ok(boxes.length > 0, "no checkboxes after switching to global");
-});
-
-test("switching back to per-slice removes them again", () => {
-  const { view, elements } = rig(weightMeta(), weightVolume());
-  view.setScaling("global");
-
   view.setScaling("slice");
 
-  const boxes = elements["contour-levels"].children.flatMap((row) =>
-    (row.children ?? []).filter((c) => c.type === "checkbox"),
-  );
-  assert.deepEqual(boxes, []);
-  assert.match(panelText(elements), /per slice/);
+  assert.deepEqual(stray.children, []);
+});
+
+test("every active level draws, with no per-level skip", () => {
+  // The `enabled` map is gone, so setLevels must report segments for every
+  // level that crosses the slice rather than only the checked ones.
+  const { view } = rig(weightMeta(), weightVolume());
+  view.update("z", 3);
+
+  const segments = view.setLevels([0.2, 0.4, 0.6]);
+  assert.ok(segments > 0, "no segments drawn for an all-active level set");
 });
 
 // --- what per-slice deliberately does NOT touch -----------------------------

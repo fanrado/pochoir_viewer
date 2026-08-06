@@ -121,7 +121,8 @@ test("z remains the checked starting axis", () => {
 // --- contour controls -------------------------------------------------------
 
 test("the contour controls are present", () => {
-  for (const id of ["layer-contours", "contour-levels", "contour-legend"]) {
+  // #contour-levels went with the per-level checkboxes (af737a4).
+  for (const id of ["layer-contours", "contour-status", "contour-legend"]) {
     assert.ok(html.includes(`id="${id}"`), `missing id="${id}"`);
   }
 });

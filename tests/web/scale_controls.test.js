@@ -1,10 +1,13 @@
-// Tests for contourLevels, the per-level checkbox cap, and wireScaleControls.
+// Tests for contourLevels and wireScaleControls.
+//
+// The per-level checkbox cap (MAX_PER_LEVEL_CHECKBOXES) was tested here until
+// 46a8cc5 removed the checkbox machinery: with the count pinned at 200 and the
+// cap at 24 the toggles could never render.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
   CONTOUR_LEVEL_COUNT,
-  MAX_PER_LEVEL_CHECKBOXES,
   contourLevels,
   wireScaleControls,
 } from "../../web/potential_view.js";
@@ -122,18 +125,6 @@ test("levels are distinct at a large count", () => {
   const levels = contourLevels(weight(), 1000, LOG);
 
   assert.equal(new Set(levels).size, 1000);
-});
-
-// --- the per-level checkbox cap --------------------------------------------
-
-test("the cap is a small positive number", () => {
-  assert.ok(Number.isInteger(MAX_PER_LEVEL_CHECKBOXES));
-  assert.ok(MAX_PER_LEVEL_CHECKBOXES > 0 && MAX_PER_LEVEL_CHECKBOXES < 200);
-});
-
-test("the cap is far below the slider maximum", () => {
-  // The slider reaches 5000; per-level checkboxes must not be attempted there.
-  assert.ok(MAX_PER_LEVEL_CHECKBOXES < 5000 / 10);
 });
 
 // --- wireScaleControls ------------------------------------------------------

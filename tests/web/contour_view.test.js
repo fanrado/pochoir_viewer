@@ -166,7 +166,7 @@ function rig(over = {}, elements = undefined) {
   const sceneRoot = new THREE.Group();
   const m = meta(over);
   const doc = fakeDoc(
-    elements ?? { "contour-levels": fakeElement(), "contour-legend": fakeElement() },
+    elements ?? { "contour-legend": fakeElement() },
   );
   const view = createContourView(m, rampVolume(SHAPE, m.vmin, m.vmax), sceneRoot, doc);
   return { view, sceneRoot, doc, meta: m };
@@ -211,27 +211,6 @@ test("levels() returns a copy", () => {
   assert.ok(!view.levels().includes(-999));
 });
 
-test("the checkbox labels carry the level and unit", () => {
-  // UPDATED for 77e24c4: names moved from per-level meshes onto the panel rows.
-  const { doc } = rig();
-
-  const texts = doc.created.flatMap((el) => el.children ?? []).filter((c) => typeof c === "string");
-  assert.ok(texts.some((t) => t.includes("-4000") && t.includes("V")), texts.join("|"));
-});
-
-test("a dimensionless field drops the volt suffix", () => {
-  // UPDATED for 02bcae3: an unsigned field (vmin >= 0) now DEFAULTS to per-slice
-  // scaling, and that mode replaces the per-level rows with a single note div —
-  // so there are no labels to inspect until we ask for global mode. The
-  // assertion below is unchanged; only the mode it runs in is now explicit.
-  const { doc, view } = rig({ units: "dimensionless", vmin: 0, vmax: 1 });
-  view.setScaling("global");
-
-  const texts = doc.created.flatMap((el) => el.children ?? []).filter((c) => typeof c === "string");
-  assert.ok(texts.length > 0);
-  for (const t of texts) assert.ok(!t.includes(" V"), t);
-});
-
 test("line colour comes from the shared ramp, now per vertex", () => {
   // A contour must still match the colour band it traces; the mechanism moved
   // from one material per level to a colour attribute on the shared buffer.
@@ -246,46 +225,6 @@ test("line colour comes from the shared ramp, now per vertex", () => {
     seen.add([colour.getX(n), colour.getY(n), colour.getZ(n)].join(","));
   }
   assert.ok(seen.size > 1, "every vertex is the same colour");
-});
-
-test("a checkbox per level while the count is small", () => {
-  const { view, doc } = rig();
-
-  const boxes = doc.created.filter((el) => el.type === "checkbox");
-  assert.equal(boxes.length, view.levels().length);
-});
-
-test("checkboxes start checked", () => {
-  const { doc } = rig();
-
-  assert.ok(doc.created.filter((el) => el.type === "checkbox").every((el) => el.checked));
-});
-
-test("unchecking a contributing level drops its segments from the buffer", () => {
-  // UPDATED for 77e24c4: with one shared buffer a disabled level is omitted at
-  // rebuild rather than having its own mesh hidden. Not every level crosses a
-  // given slice, so disable them one at a time until one that does is found —
-  // asserting on an arbitrary checkbox would pass or fail by luck.
-  const { view, doc } = rig();
-  const count = () =>
-    view.group.children[0].geometry.getAttribute("position")?.count ?? 0;
-
-  view.update("z", 3);
-  const before = count();
-  assert.ok(before > 0, "no contour geometry to start from");
-
-  let dropped = false;
-  for (const box of doc.created.filter((el) => el.type === "checkbox")) {
-    const previous = count();
-    box.checked = false;
-    box.fire("change");
-    view.update("z", 3);
-    if (count() < previous) {
-      dropped = true;
-      break;
-    }
-  }
-  assert.ok(dropped, "no level ever reduced the buffer");
 });
 
 test("the view survives a missing panel and legend", () => {
@@ -392,19 +331,6 @@ test("update on each axis places contours on that axis's plane", () => {
   }
 });
 
-test("disabling every level empties the buffer", () => {
-  const { view, doc } = rig();
-
-  for (const box of doc.created.filter((el) => el.type === "checkbox")) {
-    box.checked = false;
-    box.fire("change");
-  }
-  view.update("z", 3);
-
-  const attr = view.group.children[0].geometry.getAttribute("position");
-  assert.ok(!attr || attr.count === 0);
-});
-
 test("repeated updates do not accumulate objects", () => {
   const { view } = rig();
   const before = view.group.children.length;
@@ -463,13 +389,40 @@ test("a meta with no units is treated as volts", () => {
   assert.notDeepEqual(levels, WEIGHT_CONTOUR_LEVELS);
 });
 
-test("a unitless meta keeps the volt suffix on the panel labels", () => {
-  const bare = { shape: SHAPE, spacing: [0.1, 0.1, 0.1], origin: [0, 0, 0], vmin: -8000, vmax: 0, zstride: 1 };
-  const doc = fakeDoc({ "contour-levels": fakeElement() });
+test("no per-level rows or checkboxes are built at all", () => {
+  // 46a8cc5 removed the checkbox machinery: no createElement-ed checkbox, and
+  // no level-label text, should reach the document in either scaling mode.
+  const { view, doc } = rig();
 
-  createContourView(bare, rampVolume(), new THREE.Group(), doc);
+  const boxes = () => doc.created.filter((el) => el.type === "checkbox");
+  assert.deepEqual(boxes(), [], "checkboxes were created on construction");
+
+  view.setScaling("global");
+  assert.deepEqual(boxes(), [], "checkboxes were created for global scaling");
+
+  view.setScaling("slice");
+  assert.deepEqual(boxes(), [], "checkboxes were created for per-slice scaling");
+});
+
+test("no level label text is emitted, in volts or otherwise", () => {
+  // The `label` helper went with the checkboxes. Nothing should now render
+  // "-4000 V" into the panel for a drift field.
+  const { doc } = rig();
 
   const texts = doc.created.flatMap((el) => el.children ?? []).filter((c) => typeof c === "string");
-  assert.ok(texts.length > 0);
-  assert.ok(texts.some((t) => t.includes(" V")), texts.join("|"));
+  assert.deepEqual(texts, [], `panel text survived the removal: ${texts.join("|")}`);
+});
+
+test("every level draws, with nothing able to disable one", () => {
+  // The `enabled` map is gone. The buffer must reflect all crossing levels and
+  // stay put across repeated rebuilds -- there is no longer any way to drop one.
+  const { view } = rig();
+
+  view.update("z", 3);
+  const count = () => view.group.children[0].geometry.getAttribute("position")?.count ?? 0;
+  const before = count();
+  assert.ok(before > 0, "no contour geometry to start from");
+
+  view.update("z", 3);
+  assert.equal(count(), before, "a rebuild changed the level set");
 });
