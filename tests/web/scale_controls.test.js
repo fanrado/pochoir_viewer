@@ -283,14 +283,14 @@ test("the decades slider also recomputes on release, not on drag", () => {
   controls.refresh();
   const before = seen.at(-1)[0];
 
-  // Unsigned fields now open at FULL_SPAN_DECADES (a3a87c1), so 16 is the
-  // shallower window here and must raise the floor rather than lower it.
+  // Unsigned fields open at PHYSICS_FLOOR_DECADES = 12 (53a4692), so 16 is the
+  // deeper window and must lower the floor.
   els["log-decades"].value = "16";
   els["log-decades"].fire("input");
   assert.equal(seen.at(-1)[0], before, "dragging recomputed");
 
   els["log-decades"].fire("change");
-  assert.ok(seen.at(-1)[0] > before, "a shallower window did not raise the first level");
+  assert.ok(seen.at(-1)[0] < before, "deeper decades did not lower the first level");
 });
 
 test("dragging decades still updates the label live", () => {
@@ -306,7 +306,7 @@ test("dragging decades still updates the label live", () => {
 test("the decades label states the resulting floor", () => {
   const { els } = rig(weight());
 
-  assert.match(els["log-decades-label"].textContent, /floor 1\.0e-40 x max/);
+  assert.match(els["log-decades-label"].textContent, /floor 1\.0e-12 x max/);
 });
 
 test("signed data still opens on the markup's 8 decades", () => {
