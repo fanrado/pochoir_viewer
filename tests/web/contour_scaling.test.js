@@ -16,7 +16,9 @@ import { test } from "node:test";
 import * as THREE from "three";
 
 import {
+  CONTOUR_LEVEL_COUNT,
   CONTOUR_SCALINGS,
+  PHYSICS_FLOOR_DECADES,
   contourLevels,
   createContourView,
   sliceRange,
@@ -533,6 +535,26 @@ test("every per-slice contour colour is a finite in-range value", () => {
       assert.ok(Number.isFinite(v) && v >= 0 && v <= 1, `${v}`);
     }
   }
+});
+
+// --- the originally reported bug --------------------------------------------
+
+test("the unsigned default reaches the cathode region", () => {
+  // The bug as first reported: with an 8-decade window the log floor sat at
+  // vmax*1e-8 and contourLevels placed nothing below it, so Contours went
+  // blank near the cathode while Image still painted there. The unsigned
+  // default is PHYSICS_FLOOR_DECADES -- 12, not the 40 of the reverted
+  // a3a87c1 -- and it must put levels inside that region.
+  const levels = contourLevels(weightMeta(), CONTOUR_LEVEL_COUNT, {
+    scale: "log",
+    decades: PHYSICS_FLOOR_DECADES,
+  });
+
+  const cathode = levels.filter((v) => v < 1e-8 * weightMeta().vmax);
+  assert.ok(cathode.length > 0, "the default window still leaves the cathode region blank");
+
+  assert.equal(levels.length, CONTOUR_LEVEL_COUNT);
+  assert.ok(levels[0] > 0, `deepest level ${levels[0]} is not above zero`);
 });
 
 // --- the panel markup -------------------------------------------------------
