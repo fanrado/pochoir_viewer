@@ -245,8 +245,22 @@ export function renderPayloadInfo(meta, sceneExtentMm, doc = globalThis.document
   return { text, warnings };
 }
 
+/**
+ * Fail with the caller's name when there is no document to wire against.
+ * Without this the first getElementById raises a bare "cannot read properties
+ * of undefined", which says nothing about which entry point was misused.
+ */
+function requireDocument(doc, who) {
+  if (!doc || typeof doc.getElementById !== "function") {
+    throw new TypeError(
+      `${who} needs a document: none was passed and globalThis.document is unavailable`,
+    );
+  }
+}
+
 /** Draw the vertical colorbar and its hover tick. */
 export function createColorbar(meta, doc = globalThis.document) {
+  requireDocument(doc, "createColorbar");
   const canvas = doc.getElementById("colorbar");
   const ctx = canvas?.getContext("2d");
   const { width, height } = canvas ?? { width: 0, height: 0 };
@@ -354,6 +368,7 @@ export function createColorbar(meta, doc = globalThis.document) {
  * current index clamped, so a tall z range cannot leave a stale index behind.
  */
 export function wireSliceControls(view, doc = globalThis.document, onRender = null) {
+  requireDocument(doc, "wireSliceControls");
   const slider = doc.getElementById("slice-idx");
   const label = doc.getElementById("slice-label");
   const radios = {
