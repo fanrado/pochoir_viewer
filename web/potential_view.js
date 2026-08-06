@@ -760,8 +760,17 @@ export function wireSliceModes(sliceView, contourView, doc = globalThis.document
 /** Contour levels are no longer user-adjustable; the count is fixed here. */
 export const CONTOUR_LEVEL_COUNT = 200;
 
-/** Decades of log range an unsigned field opens on — the slider's maximum. */
-export const FULL_SPAN_DECADES = 40;
+/**
+ * Decades of log range an unsigned field opens on.
+ *
+ * 12 reaches the 1e-12 physics floor: below that the weighting values are
+ * relaxation-solver residue rather than field (README "A caveat on the deep
+ * tail"). Opening on the full ~39.5-decade span instead would spend most of
+ * the fixed CONTOUR_LEVEL_COUNT levels on that noise and thin out the
+ * meaningful range fivefold. The slider still reaches 40 for anyone who wants
+ * to look at the residue tail.
+ */
+export const PHYSICS_FLOOR_DECADES = 12;
 
 /**
  * Wire the colour-scale and decades controls.
@@ -793,14 +802,14 @@ export function wireScaleControls(meta, handlers = {}, doc = globalThis.document
   // Weighting defaults to log — a linear ramp hides everything past the pad.
   let scale = signed ? "linear" : "log";
 
-  // The weighting volume spans ~39.5 decades. At the markup's 8 the log floor
-  // is vmax*1e-8, so contourLevels places nothing in the near-cathode region
-  // and Contours goes blank there while Image still paints it. Open unsigned
-  // fields on the full span instead, and push the value back into the slider
-  // so the control agrees with what is drawn.
+  // At the markup's 8 the log floor is vmax*1e-8, so contourLevels places
+  // nothing in the near-cathode region and Contours goes blank there while
+  // Image still paints it. Open unsigned fields at the physics floor instead,
+  // and push the value back into the slider so the control agrees with what is
+  // drawn.
   let decades = signed
     ? Number(decadesInput?.value ?? 8)
-    : FULL_SPAN_DECADES;
+    : PHYSICS_FLOOR_DECADES;
   if (!signed && decadesInput) decadesInput.value = String(decades);
 
   const opts = () => ({ scale, decades });
