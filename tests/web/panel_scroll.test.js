@@ -177,8 +177,9 @@ test("the sections that existed before the rewrite still carry their controls", 
     "pivot-readout",
     "center-domain",
     "groups",
-    // iso-opacity / iso-levels dropped with the isosurface feature (c60693e).
-    "contour-count",
+    // iso-opacity / iso-levels dropped with the isosurface feature (c60693e);
+    // contour-count with the fixed level count (17dfac7).
+    "contour-status",
   ]) {
     assert.ok(html.includes(`id="${id}"`), `missing id="${id}" after the section rewrite`);
   }

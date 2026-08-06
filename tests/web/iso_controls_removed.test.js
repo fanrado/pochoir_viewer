@@ -32,7 +32,7 @@ test("the removed iso styling hook is absent from index.html", () => {
 
 test("the surviving panel sections are untouched by the removal", () => {
   // Guards against an over-broad delete taking neighbouring controls with it.
-  for (const id of ["slice-idx", "contour-count", "log-decades", "zscale", "npaths",
+  for (const id of ["slice-idx", "log-decades", "zscale", "npaths",
                     "layer-paths", "layer-slice", "layer-boundary", "volt-readout"]) {
     assert.ok(html().includes(`id="${id}"`), `removal also dropped id="${id}"`);
   }

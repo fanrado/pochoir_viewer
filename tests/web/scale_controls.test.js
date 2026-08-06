@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  CONTOUR_LEVEL_COUNT,
   MAX_PER_LEVEL_CHECKBOXES,
   contourLevels,
   wireScaleControls,
@@ -157,16 +158,15 @@ function fakeElement(tag = "div", value = "") {
   };
 }
 
-function rig(meta) {
+function rig(meta, extra = {}) {
   const els = {
     "scale-linear": fakeElement("button"),
     "scale-log": fakeElement("button"),
     "decades-row": fakeElement(),
     "log-decades": fakeElement("input", "8"),
     "log-decades-label": fakeElement("span"),
-    "contour-count": fakeElement("input", "200"),
-    "contour-count-label": fakeElement("span"),
     "contour-status": fakeElement(),
+    ...extra,
   };
   const doc = { getElementById: (id) => els[id] ?? null };
   const seen = [];
@@ -246,18 +246,25 @@ test("refreshLevels emits without changing the scale", () => {
   assert.equal(controls.getScale().scale, "log");
 });
 
-test("the count slider recomputes on release, not on drag", () => {
-  // Deliberately debounced: at up to 5000 levels, recomputing on every drag
-  // frame would lock the page. The comment in the source says as much, so the
-  // input/change split is the contract rather than an oversight.
-  const { els, seen } = rig(weight());
+test("the level count is fixed, not read from the panel", () => {
+  // The count slider is gone: emitLevels uses CONTOUR_LEVEL_COUNT. A leftover
+  // #contour-count element in the document must not influence the count, and
+  // firing its events must not drive a rebuild.
+  const stray = fakeElement("input", "800");
+  const { els, seen, controls } = rig(weight(), { "contour-count": stray });
 
-  els["contour-count"].value = "800";
-  els["contour-count"].fire("input");
-  assert.equal(seen.length, 0, "dragging recomputed");
+  controls.refreshLevels();
+  assert.equal(seen.at(-1).length, CONTOUR_LEVEL_COUNT);
 
-  els["contour-count"].fire("change");
-  assert.equal(seen.at(-1).length, 800);
+  const before = seen.length;
+  stray.fire("input");
+  stray.fire("change");
+  assert.equal(seen.length, before, "the stray slider still drives a rebuild");
+  assert.equal(els["contour-status"].textContent.includes("800 levels"), false);
+});
+
+test("CONTOUR_LEVEL_COUNT is 200", () => {
+  assert.equal(CONTOUR_LEVEL_COUNT, 200);
 });
 
 test("switching scale re-emits levels with the new spacing", () => {
@@ -276,12 +283,14 @@ test("the decades slider also recomputes on release, not on drag", () => {
   controls.refresh();
   const before = seen.at(-1)[0];
 
+  // Unsigned fields now open at FULL_SPAN_DECADES (a3a87c1), so 16 is the
+  // shallower window here and must raise the floor rather than lower it.
   els["log-decades"].value = "16";
   els["log-decades"].fire("input");
   assert.equal(seen.at(-1)[0], before, "dragging recomputed");
 
   els["log-decades"].fire("change");
-  assert.ok(seen.at(-1)[0] < before, "deeper decades did not lower the first level");
+  assert.ok(seen.at(-1)[0] > before, "a shallower window did not raise the first level");
 });
 
 test("dragging decades still updates the label live", () => {
@@ -297,13 +306,26 @@ test("dragging decades still updates the label live", () => {
 test("the decades label states the resulting floor", () => {
   const { els } = rig(weight());
 
-  assert.match(els["log-decades-label"].textContent, /floor 1\.0e-8 x max/);
+  assert.match(els["log-decades-label"].textContent, /floor 1\.0e-40 x max/);
 });
 
-test("the count label reports the level count", () => {
-  const { els } = rig(weight());
+test("signed data still opens on the markup's 8 decades", () => {
+  // a3a87c1 moved unsigned fields to the full span only. Log is disabled on
+  // drift, so its window must be left exactly where the slider says.
+  const { els } = rig(drift());
 
-  assert.match(els["contour-count-label"].textContent, /200 levels/);
+  assert.equal(els["log-decades"].value, "8");
+  assert.match(els["log-decades-label"].textContent, /^8 \(floor 1\.0e-8 x max\)/);
+});
+
+test("the status line is the only place the level count is reported", () => {
+  // The count label went with the slider; nothing writes to it any more.
+  const label = fakeElement("span");
+  const { els, controls } = rig(weight(), { "contour-count-label": label });
+  controls.refresh();
+
+  assert.equal(label.textContent, "");
+  assert.match(els["contour-status"].textContent, /200 levels/);
 });
 
 test("the status line reports levels, segments and elapsed time", () => {
@@ -318,8 +340,7 @@ test("the status line reports levels, segments and elapsed time", () => {
 });
 
 test("a missing handler does not break the controls", () => {
-  const els = { "contour-count": fakeElement("input", "50") };
-  const doc = { getElementById: (id) => els[id] ?? null };
+  const doc = { getElementById: () => null };
 
   const controls = wireScaleControls(weight(), {}, doc);
 
