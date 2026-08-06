@@ -488,16 +488,13 @@ export function sliceRange(values) {
  *
  * ONE merged LineSegments holds every level, coloured per vertex by that level's
  * ramp position. Step 10.15 used one object per level, which is fine for seven
- * but not for the up-to-5000 levels Step 13.3 allows: 5000 levels is of the
- * order of a million segments, and that many draw calls and DOM checkboxes
- * would lock the page. Per-level checkboxes are therefore kept only while the
- * count is small enough for them to be usable.
+ * but not for the CONTOUR_LEVEL_COUNT levels drawn now: that many draw calls
+ * would lock the page.
  *
  * Geometry is placed with the SAME slicePlaneParams as the textured plane, so
  * lines cannot drift from the colour bands they trace, and nudged a fraction of
  * one voxel along the normal to avoid z-fighting.
  */
-export const MAX_PER_LEVEL_CHECKBOXES = 24;
 
 export function createContourView(meta, volume, sceneRoot, doc = globalThis.document) {
   const group = new THREE.Group();
@@ -512,10 +509,7 @@ export function createContourView(meta, volume, sceneRoot, doc = globalThis.docu
   lines.name = "contourLines";
   group.add(lines);
 
-  const levelsPanel = doc.getElementById("contour-levels");
-
   let levels = defaultContourLevels(meta);
-  let enabled = new Map(levels.map((level) => [level, true]));
   let scaleOpts = { scale: "linear", decades: 8 };
   let last = null;
 
@@ -526,44 +520,6 @@ export function createContourView(meta, volume, sceneRoot, doc = globalThis.docu
   // meta.vmin < 0 identifies the signed drift field, the same test
   // wireScaleControls uses to disable log.
   let scaling = meta.vmin < 0 ? "global" : "slice";
-
-  const unit = (meta.units ?? "V") === "V" ? " V" : "";
-  const label = (level) =>
-    `${(meta.units ?? "V") === "V" ? level : level.toExponential(2)}${unit}`;
-
-  function rebuildCheckboxes() {
-    if (!levelsPanel) return;
-    levelsPanel.replaceChildren?.();
-
-    if (levels.length > MAX_PER_LEVEL_CHECKBOXES) {
-      const note = doc.createElement("div");
-      note.textContent = `${levels.length} levels — per-level toggles shown at ${MAX_PER_LEVEL_CHECKBOXES} or fewer`;
-      levelsPanel.append(note);
-      return;
-    }
-
-    // Per-slice levels are recomputed for every slice, so a fixed checkbox
-    // could not name a level that survives a scrub. Say so instead of
-    // offering toggles that would silently stop matching.
-    if (scaling === "slice") {
-      const note = doc.createElement("div");
-      note.textContent = `${levels.length} levels, re-placed per slice — per-level toggles need global scaling`;
-      levelsPanel.append(note);
-      return;
-    }
-    for (const level of levels) {
-      const row = doc.createElement("label");
-      const box = doc.createElement("input");
-      box.type = "checkbox";
-      box.checked = enabled.get(level) !== false;
-      box.addEventListener("change", () => {
-        enabled.set(level, box.checked);
-        if (last) update(last.axis, last.index);
-      });
-      row.append(box, ` ${label(level)}`);
-      levelsPanel.append(row);
-    }
-  }
 
   /**
    * The levels to draw on one slice, and the range they were placed across.
@@ -599,13 +555,9 @@ export function createContourView(meta, volume, sceneRoot, doc = globalThis.docu
     const colors = [];
     const scratch = new THREE.Color();
 
-    // Per-slice levels are freshly derived each slice, so they are absent from
-    // `enabled` and the `=== false` test below leaves them all on. Per-level
-    // checkboxes only ever appear in global mode.
     const active = activeLevels(slice);
 
     for (const level of active.levels) {
-      if (enabled.get(level) === false) continue;
       const segments = contourSegments(slice.values, slice.width, slice.height, level);
       if (segments.length === 0) continue;
 
@@ -655,8 +607,6 @@ export function createContourView(meta, volume, sceneRoot, doc = globalThis.docu
   /** Replace the level set, keeping the current slice. Returns segment count. */
   function setLevels(next) {
     levels = [...next];
-    enabled = new Map(levels.map((level) => [level, true]));
-    rebuildCheckboxes();
     return last ? update(last.axis, last.index) : 0;
   }
 
@@ -670,7 +620,6 @@ export function createContourView(meta, volume, sceneRoot, doc = globalThis.docu
     if (!CONTOUR_SCALINGS.includes(mode)) return 0;
     scaling = mode;
     paintScalingButtons();
-    rebuildCheckboxes(); // the panel says which mode is in force
     return last ? update(last.axis, last.index) : 0;
   }
 
@@ -704,7 +653,6 @@ export function createContourView(meta, volume, sceneRoot, doc = globalThis.docu
   });
 
   paintScalingButtons();
-  rebuildCheckboxes();
   return {
     group,
     update,
