@@ -321,7 +321,6 @@ function disposePotential() {
       child.material?.dispose();
     });
   }
-  document.getElementById("contour-levels").replaceChildren();
   document.getElementById("contour-legend").replaceChildren();
   sliceView = null;
   sliceControls = null;
