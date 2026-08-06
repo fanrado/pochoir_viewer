@@ -35,7 +35,7 @@
   #panel label { display: block; margin-top: 10px; }
   /* touch-action: none keeps a drag on the thumb from panning the scroll
      container instead of moving the slider. Covers #npaths, #zscale,
-     #slice-idx, #contour-count and #log-decades alike. */
+     #slice-idx and #log-decades alike. */
   #panel input[type=range] { width: 100%; touch-action: none; }
   #panel button { margin-top: 8px; width: 100%; }
   #groups label { margin-top: 4px; }
@@ -188,8 +188,6 @@
           <button id="scaling-slice" class="layer" aria-pressed="false">per-slice</button>
         </div>
       </div>
-      <label for="contour-count">levels <span id="contour-count-label"></span></label>
-      <input type="range" id="contour-count" min="100" max="5000" step="100" value="200">
       <div id="contour-status"></div>
       <div id="contour-levels"></div>
       <div id="contour-legend"></div>
