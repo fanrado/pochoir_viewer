@@ -757,16 +757,16 @@ export function wireSliceModes(sliceView, contourView, doc = globalThis.document
   return { getMode: () => mode, apply };
 }
 
+/** Contour levels are no longer user-adjustable; the count is fixed here. */
+export const CONTOUR_LEVEL_COUNT = 200;
+
 /**
- * Wire the colour-scale, decades and contour-count controls.
+ * Wire the colour-scale and decades controls.
  *
- * `onLevels(levels)` is called with a fresh level set whenever the count or
- * spacing changes; `onScale(opts)` whenever the image scaling changes.
- *
- * The count slider recomputes on "change" (pointer release), NOT "input": at
- * 5000 levels a slice yields on the order of a million segments, and
- * recomputing every drag tick would lock the page. A status line reports the
- * segment count and elapsed time so the cost is visible rather than mysterious.
+ * `onLevels(levels)` is called with a fresh level set whenever the spacing
+ * changes; `onScale(opts)` whenever the image scaling changes. A status line
+ * reports the segment count and elapsed time so the cost of a rebuild is
+ * visible rather than mysterious.
  */
 export function wireScaleControls(meta, handlers = {}, doc = globalThis.document) {
   const signed = meta.vmin < 0;
@@ -777,8 +777,6 @@ export function wireScaleControls(meta, handlers = {}, doc = globalThis.document
   const decadesRow = doc.getElementById("decades-row");
   const decadesInput = doc.getElementById("log-decades");
   const decadesLabel = doc.getElementById("log-decades-label");
-  const countInput = doc.getElementById("contour-count");
-  const countLabel = doc.getElementById("contour-count-label");
   const status = doc.getElementById("contour-status");
 
   // Log is meaningless on signed data and Step 13.2 throws on it, so the drift
@@ -808,8 +806,7 @@ export function wireScaleControls(meta, handlers = {}, doc = globalThis.document
   }
 
   function emitLevels() {
-    const count = Number(countInput?.value ?? 200);
-    if (countLabel) countLabel.textContent = `${count} levels`;
+    const count = CONTOUR_LEVEL_COUNT;
     if (status) status.textContent = "computing...";
 
     const started = Date.now();
@@ -841,10 +838,6 @@ export function wireScaleControls(meta, handlers = {}, doc = globalThis.document
     paintButtons(); // label tracks the drag
   });
   decadesInput?.addEventListener("change", emitScale);
-
-  // Debounced by design: release, not drag.
-  countInput?.addEventListener("change", emitLevels);
-  if (countLabel) countLabel.textContent = `${countInput?.value ?? 200} levels`;
 
   paintButtons();
   return { getScale: opts, refresh: emitScale, refreshLevels: emitLevels };
