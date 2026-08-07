@@ -295,6 +295,87 @@ grid surface where the two meet. If it lands somewhere else, something in the
 export or the grid spacing is wrong — it is a free correctness check on the
 whole pipeline.
 
+## The induced-current view
+
+The panel in the top right, below the view cube, answers one question: as a
+single electron drifts, what current does it induce on the pad it lands on and
+on that pad's neighbours? Export the payload first — see
+[Regenerating the input data](#regenerating-the-input-data), product 5.
+
+### Reading the four panels
+
+The 2x2 grid mirrors the pixels in space. The **central** pixel and the
+**diagonal** neighbour sit on one diagonal of the grid; the **x-** and
+**y-neighbours** on the other, so the panel layout matches the pad layout.
+
+All four panels share one vertical scale. That is deliberate: the diagonal
+neighbour peaks roughly fifty times below the central pixel, and autoscaling
+each panel independently would draw both as the same size wiggle, destroying
+the amplitude comparison the view exists for. The time axis is labelled in
+physical units taken from the payload's `time_step_us`, never in raw ticks.
+
+### Selecting paths
+
+The 10x10 grid is one toggle per drift path, laid out as the domain seen down
+z. It is **multi-select** — pick `{0,0}`, `{3,2}`, `{9,1}` and `{5,7}` together
+and every panel draws four curves, one per path. A legend keys each colour to
+its `{i, j}`, which is the only way to tell sixteen curves apart. **clear all**
+empties the selection. Hovering a cell names its start position in mm.
+
+Changing the selection resets the animation to tick 0, so a newly selected
+electron never appears mid-drift at a tick it was not animated through.
+
+### Play/pause
+
+**play** advances a **single tick counter** that drives both the drifting dots
+in the 3-D scene and the vertical time cursor across all four plots. One
+counter, not two: the dot and the cursor cannot disagree about where in the
+drift you are looking, which is the whole point of the feature. Playback stops
+at the final tick rather than looping — the response has a physical end, and
+wrapping would imply a periodicity the data does not have.
+
+### Which response row belongs to which path
+
+The response array is `(R, T)` — one waveform per source position. Those
+positions form an `N x N` grid flattened in C order, `N = isqrt(R)`, so row `r`
+is position `(a, b)` with `r = a*N + b`. The viewer draws the `M x M` corner,
+`M = isqrt(n_paths)`.
+
+**The block is not the first `n_paths` rows.** Under that layout the corner is
+the strided set of rows 0–9, 25–34, 50–59, … for `N = 25, M = 10`. Taking
+`response[:100]` instead grabs a 4 x 25 slab — the full width of the grid and a
+sliver of its height — so every plotted waveform would belong to a different
+source position than the one selected. Reshape to `(N, N, T)` first, then slice
+`[:M, :M]`.
+
+### Why one path gives four traces
+
+A response row is indexed by the electron's **starting** position, not by the
+pixel the current lands on. By reciprocity the quarter of the domain a start
+falls in identifies which pixel picks up the current, so the four pixels a
+single path induces on are four different rows of the same block. The 10-wide
+domain splits 5 + 5, so for a start in the central quarter the traces are:
+
+| panel | row |
+| --- | --- |
+| central | `block[i, j]` |
+| x-neighbour | `block[i+5, j]` |
+| y-neighbour | `block[i, j+5]` |
+| diagonal | `block[i+5, j+5]` |
+
+Those `+5` offsets come from the description of the `fr` layout, not from
+anything recorded in the file. If the traces ever look wrong, that assumption
+is the first thing to question — not the offsets to quietly adjust.
+
+### Ticks against decimated paths
+
+The response has **3999 ticks** but `scene.json` ships paths **decimated to at
+most 400 points** (`--max-points`), roughly ten ticks per stored point. The
+viewer maps tick `k` to the fractional index `k/(T-1) * (N-1)` along the path
+and interpolates between the two bracketing samples, so the dot glides instead
+of jumping every ten ticks. The paths are never resampled, and the point count
+is read per path — `decimate()` returns fewer points for short ones.
+
 ## The weighting field
 
 The viewer shows two fields. The **field** selector at the top of the panel
