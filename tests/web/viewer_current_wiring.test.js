@@ -124,3 +124,132 @@ test("the view is only built for a field that has paths", () => {
 
   assert.ok(guard > 0 && build > guard, "createCurrentView is not inside the hasPaths guard");
 });
+
+// --- the shared tick loop (2dd9436) -----------------------------------------
+//
+// Still static, and this is where that hurts most: a frame loop is exactly the
+// kind of thing only a browser can really exercise. What can be checked is the
+// structure the comments claim -- ONE counter feeding both consumers, a stop
+// at the end rather than a wrap, and a teardown that cannot leave a loop
+// running against disposed objects.
+
+/** The body of a named top-level function in viewer.js. */
+function functionBody(name) {
+  const start = source.indexOf(`function ${name}(`);
+  assert.ok(start > 0, `viewer.js no longer defines ${name}`);
+  const rest = source.slice(start);
+  const open = rest.indexOf("{");
+  let depth = 0;
+  for (let i = open; i < rest.length; i++) {
+    if (rest[i] === "{") depth++;
+    else if (rest[i] === "}" && --depth === 0) return rest.slice(open, i + 1);
+  }
+  assert.fail(`${name} is unbalanced`);
+}
+
+test("one tick counter feeds both the dots and the plot cursor", () => {
+  // The stated point of the feature: two counters could drift apart and show
+  // an electron at a position its own current trace disagrees with.
+  const step = functionBody("stepCurrent");
+
+  assert.match(step, /driftAnim\?\.setTick\(tick\)/);
+  assert.match(step, /currentView\?\.setCursor\(tick\)/);
+});
+
+test("only one variable is ever advanced", () => {
+  // A second counter incremented anywhere would defeat the above.
+  const step = functionBody("stepCurrent");
+  const advanced = [...step.matchAll(/(\w+)\s*\+=/g)].map((m) => m[1]);
+
+  assert.deepEqual([...new Set(advanced)], ["tick"]);
+});
+
+test("the loop stops at the end instead of wrapping", () => {
+  // Looping back to t=0 would imply a periodicity the response does not have.
+  const step = functionBody("stepCurrent");
+
+  assert.match(step, /tick >= nTicks - 1/);
+  assert.match(step, /pauseCurrent\(\)/);
+  assert.equal(/tick = 0/.test(step), false, "the loop resets the tick and wraps");
+});
+
+test("the tick count comes from the payload, not a constant", () => {
+  // 3999 is this dataset's; another export has a different T.
+  assert.match(functionBody("stepCurrent"), /currentView\?\.nTicks/);
+  assert.match(selectField(), /nTicks = data\.meta\.shape\[2\]/);
+});
+
+test("pausing releases the frame handle and is safe when not playing", () => {
+  const pause = functionBody("pauseCurrent");
+
+  assert.match(pause, /if \(playHandle !== null\)/);
+  assert.match(pause, /cancelAnimationFrame\(playHandle\)/);
+  assert.match(pause, /playHandle = null/);
+});
+
+test("the button's label and pressed state track the loop", () => {
+  // The only on-screen indication of which state it is in.
+  const pause = functionBody("pauseCurrent");
+
+  assert.match(pause, /aria-pressed", "false"/);
+  assert.match(pause, /textContent = "play"/);
+  assert.match(source, /aria-pressed", "true"/);
+  assert.match(source, /textContent = "pause"/);
+});
+
+test("a field switch pauses before disposing what the loop touches", () => {
+  // A loop left running would call setTick against a disposed geometry.
+  const body = selectField();
+  const paused = body.indexOf("pauseCurrent()");
+  const disposed = body.indexOf("driftAnim.points.geometry.dispose()");
+
+  assert.ok(paused >= 0, "selectField does not pause the loop");
+  assert.ok(disposed > paused, "disposal happens before the pause");
+});
+
+test("a field switch disposes the dots rather than leaking them", () => {
+  const body = selectField();
+
+  assert.match(body, /sceneRoot\.remove\(driftAnim\.points\)/);
+  assert.match(body, /driftAnim\.points\.geometry\.dispose\(\)/);
+  assert.match(body, /driftAnim\.points\.material\.dispose\(\)/);
+  assert.match(body, /driftAnim = null/);
+});
+
+test("a field switch rewinds the tick", () => {
+  // Otherwise the new field's dots would appear mid-drift.
+  assert.match(selectField(), /pauseCurrent\(\);\s*\n\s*tick = 0/);
+});
+
+test("the dots ride the same z-compressed root as the paths", () => {
+  // A dot added to the world instead would leave its own path the moment the
+  // z-compression slider moves.
+  assert.match(selectField(), /sceneRoot\.add\(driftAnim\.points\)/);
+});
+
+test("the dots are built with the payload's tick count", () => {
+  // driftAnim and currentView must agree on T or the dot and the cursor
+  // describe different instants.
+  assert.match(selectField(), /createDriftAnim\(sceneData\.paths, data\.meta\.shape\[2\]\)/);
+});
+
+test("a second click at the end replays instead of doing nothing", () => {
+  assert.match(source, /if \(tick >= \(currentView\?\.nTicks \?\? 0\) - 1\) tick = 0/);
+});
+
+test("clicking while playing pauses", () => {
+  const handler = source.slice(source.indexOf('playButton?.addEventListener'));
+
+  assert.match(handler.slice(0, 400), /if \(playHandle !== null\) \{\s*\n\s*pauseCurrent\(\);\s*\n\s*return;/);
+});
+
+test("the no-paths branch now drops the view, closing pochoir_viewer-6zr3", () => {
+  // cdb2b76 dimmed the panel but left the drift curves painted; 2dd9436
+  // added the clear. Kept as a regression pin rather than folded into the
+  // earlier test, which is what caught it.
+  const body = selectField();
+  const branch = body.slice(body.indexOf("if (!hasPaths)"));
+
+  assert.match(branch.slice(0, 300), /currentView\?\.setSelection\(\[\]\)/);
+  assert.match(branch.slice(0, 300), /currentView = null/);
+});
