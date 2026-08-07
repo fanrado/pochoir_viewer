@@ -106,8 +106,9 @@ test("the weighting branch clears the drift traces it is meant to hide", () => {
 
 test("a freshly loaded payload opens on a path in the central quarter", () => {
   // tracesForPath throws outside [0, 5), so an out-of-quarter default would
-  // turn a successful load into the catch branch.
-  const match = selectField().match(/setSelection\(\[\{ i: (\d+), j: (\d+) \}\]\)/);
+  // turn a successful load into the catch branch. 6ed3d79 moved the default
+  // from a literal setSelection into the selector's seed key.
+  const match = source.match(/if \(selectedPaths\.size === 0\) selectedPaths\.add\("(\d+),(\d+)"\)/);
 
   assert.ok(match, "no initial selection is made");
   for (const n of [Number(match[1]), Number(match[2])]) {
