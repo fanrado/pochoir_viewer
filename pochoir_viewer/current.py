@@ -63,3 +63,47 @@ def domain_block(response: np.ndarray, n_paths: int) -> np.ndarray:
         )
 
     return response.reshape(n, n, -1)[:m, :m, :]
+
+
+#: Half-width of the 10-wide drift domain: the reciprocity offset between the
+#: central pixel's quarter and each neighbouring pixel's quarter.
+PIXEL_OFFSET = 5
+
+
+def pixel_traces(block: np.ndarray, i: int, j: int) -> dict[str, np.ndarray]:
+    """Return the four induced-current traces for the path starting at ``(i, j)``.
+
+    A response row is indexed by the electron's STARTING position, not by the
+    pixel it lands on. By reciprocity the quarter of the domain a start
+    position falls in identifies which pixel picks up the current, so the four
+    pixels a single path induces on are read from four different rows of the
+    same block. The 10-wide domain splits 5 + 5, so for a start in the central
+    quarter ``[:5, :5]``:
+
+    ``central``     ``block[i, j]``
+    ``neighbor_x``  ``block[i + 5, j]``
+    ``neighbor_y``  ``block[i, j + 5]``
+    ``diagonal``    ``block[i + 5, j + 5]``
+
+    ``(i, j)`` must lie in the central quarter: outside it the offsets name a
+    different pair of pixels entirely and would read past the block.
+
+    ASSUMPTION: the ``+5`` reciprocity offsets come from the human's
+    description of the ``fr`` layout, not from anything recorded in the file
+    itself. If the plotted traces look wrong, raise it rather than adjusting
+    these offsets.
+    """
+    if not (0 <= i < PIXEL_OFFSET and 0 <= j < PIXEL_OFFSET):
+        raise ValueError(
+            f"start position ({i}, {j}) is outside the central quarter "
+            f"[:{PIXEL_OFFSET}, :{PIXEL_OFFSET}]; the reciprocity offsets are "
+            "meaningless there"
+        )
+
+    k = PIXEL_OFFSET
+    return {
+        "central": block[i, j],
+        "neighbor_x": block[i + k, j],
+        "neighbor_y": block[i, j + k],
+        "diagonal": block[i + k, j + k],
+    }
