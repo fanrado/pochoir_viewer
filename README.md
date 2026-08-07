@@ -294,8 +294,7 @@ The axis buttons name both the plane and its normal:
 | **yz (x-slice)** | yz | x |
 | **xz (y-slice)** | xz | y |
 
-**Contours** overlays iso-lines on whichever slice is showing, with a checkbox
-per level and a legend. Levels are evenly spaced every 1000 V for the drift
+**Contours** overlays iso-lines on whichever slice is showing, with a legend. Levels are evenly spaced every 1000 V for the drift
 field and use the log-ish 0.9..0.01 set for the weighting field, and the legend
 carries the unit for whichever field is loaded. Contour colours come from the
 same ramp as the slice image and the colorbar, so a line always matches the band
@@ -340,7 +339,7 @@ contour selection.
 
 Contour levels are currently a fixed set per field: every 1000 V for the drift
 potential, and the log-ish 0.9, 0.75, 0.5, 0.25, 0.1, 0.05, 0.01 for the
-weighting potential. Each level has its own checkbox.
+weighting potential.
 
 ### Why the weighting levels are log-spaced
 
