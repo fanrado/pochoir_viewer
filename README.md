@@ -17,6 +17,80 @@ The first command reads a pochoir OUTPUT directory and writes a single
 has no data-assembly logic of its own. Re-run it whenever the OUTPUT directory
 changes. Generated data under `web/data/` is deliberately not committed.
 
+## Regenerating the input data
+
+Everything the viewer fetches, in one place. Five products, three commands.
+Each entry gives the exact invocation against the reference dataset, the files
+it writes, and what invalidates it.
+
+The filenames matter: the viewer fetches them by fixed name
+(`web/viewer.js:289-292`), so a wrong `--dest`, `--dest-dir` or `--basename`
+produces a file the page will never load. If a layer renders disabled or empty,
+check the name on disk against the table below first.
+
+**1. Drift domain** — boundary surfaces and drift paths → `web/data/scene.json`
+
+```bash
+python -m pochoir_viewer export --root ../OUTPUT/store_largepix_wgrid --dest web/data/scene.json
+```
+
+`--spacing` (default 0.1 mm) sets the assumed node pitch; it is inferred, not
+read, so a run at a different pitch needs it. `--max-points` (default 400) caps
+points per path — that decimation is what the induced-current animation
+interpolates against, so lowering it coarsens the animation as well as the
+drawn paths. Invalidated by any change to `paths/` or `boundary/`.
+
+**2. Weighting domain** → `web/data/scene_weight.json`
+
+```bash
+python -m pochoir_viewer export --root ../OUTPUT/store_largepix_wgrid --field weight --dest web/data/scene_weight.json
+```
+
+**3. Drift potential** → `web/data/potential.json` + `potential.bin`
+
+```bash
+python -m pochoir_viewer export-potential --root ../OUTPUT/store_largepix_wgrid --dest-dir web/data
+```
+
+`--stride`, `--zstride` and `--zmax` trade size against coverage. **A `--zmax`
+crop is lossy** — see
+[Why it is strided, not cropped](#why-it-is-strided-not-cropped) for how much
+each depth actually discards. Invalidated by changes to `potential/`.
+
+**4. Weighting potential** → `web/data/potential_weight.json` +
+`potential_weight.bin`
+
+```bash
+python -m pochoir_viewer export-potential --root ../OUTPUT/store_largepix_wgrid --field weight --dest-dir web/data
+```
+
+`--field weight` defaults to `--stride 2,2,2` (the full volume is 310 MB) and
+crops nothing. Note that the `potential_weight` stem the viewer fetches comes
+from the per-field **default** basename — passing `--basename` overrides it and
+the page will then look for a file that is not there.
+
+**5. Induced current** → `web/data/current.json` + `current.bin`
+
+```bash
+python -m pochoir_viewer export-current --root ../OUTPUT/store_largepix_wgrid --dest-dir web/data --time-step 0.1
+```
+
+`--time-step` is **required and in microseconds per tick** — `0.1` means 0.1 µs.
+There is deliberately no default: the response file records no sampling rate, so
+a fallback would bake a guess into every time axis the viewer draws. Better a
+loud omission than a silently wrong one. Invalidated by a new `fr_*.npy`.
+
+### All five at once
+
+```bash
+ROOT=../OUTPUT/store_largepix_wgrid
+python -m pochoir_viewer export           --root $ROOT --dest web/data/scene.json
+python -m pochoir_viewer export           --root $ROOT --field weight --dest web/data/scene_weight.json
+python -m pochoir_viewer export-potential --root $ROOT --dest-dir web/data
+python -m pochoir_viewer export-potential --root $ROOT --field weight --dest-dir web/data
+python -m pochoir_viewer export-current   --root $ROOT --dest-dir web/data --time-step 0.1
+```
+
 ### Install
 
 ```bash
