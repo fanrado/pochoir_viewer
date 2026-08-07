@@ -375,3 +375,71 @@ def test_the_central_trace_is_a_unipolar_collection_signal():
     assert central.min() > -1e-9, "the central trace swings negative"
     for name in ("neighbor_x", "neighbor_y"):
         assert traces[name].min() < 0, f"{name} is not bipolar"
+
+
+# --- the path index orientation ----------------------------------------------
+#
+# pixel_traces takes (i, j) directly, so nothing in this module yet converts a
+# path index. But every caller will, and the convention is p = i*10 + j with i
+# from x and j from y. THE fr FILE STATES NOTHING ABOUT ITS OWN ORIENTATION --
+# this is inferred from the path start lattice, and a transposed response would
+# otherwise pass silently, plotting a real waveform from the wrong pixel. So it
+# is pinned here, against the lattice it was inferred from, before a caller
+# bakes it in.
+
+PATH_PITCH_MM = 0.44
+PATHS_NPZ = REFERENCE_ROOT / "paths" / "drift3d.npz"
+needs_paths = pytest.mark.skipif(
+    not PATHS_NPZ.is_file(), reason=f"path lattice not present at {PATHS_NPZ}"
+)
+
+
+def path_starts() -> np.ndarray:
+    """The (x, y) start of each drift path, in path-index order."""
+    return np.load(PATHS_NPZ)["drift3d"][:, 0, :2]
+
+
+@needs_paths
+def test_the_path_lattice_is_ten_by_ten():
+    assert path_starts().shape == (100, 2)
+
+
+@needs_paths
+def test_y_varies_fastest_along_the_path_index():
+    # The orientation claim itself: consecutive path indices step in y, and it
+    # is x that steps once every ten. Transposed, these two swap.
+    starts = path_starts()
+
+    np.testing.assert_allclose(starts[1] - starts[0], [0.0, PATH_PITCH_MM], atol=1e-9)
+    np.testing.assert_allclose(starts[10] - starts[0], [PATH_PITCH_MM, 0.0], atol=1e-9)
+
+
+@needs_paths
+def test_the_first_three_starts_are_the_documented_ones():
+    # Quoted in the step description; a changed dataset should say so loudly
+    # rather than let the inference drift.
+    np.testing.assert_allclose(
+        path_starts()[:3], [[0.22, 0.22], [0.22, 0.66], [0.22, 1.10]], atol=1e-9
+    )
+
+
+@needs_paths
+def test_path_index_p_is_i_times_ten_plus_j():
+    # The mapping stated as arithmetic over the whole lattice, so it holds for
+    # every path rather than the handful spot-checked above.
+    starts = path_starts()
+    origin = starts[0]
+
+    for p, (x, y) in enumerate(starts):
+        i, j = divmod(p, 10)
+        assert round((x - origin[0]) / PATH_PITCH_MM) == i, f"path {p}: x is not i"
+        assert round((y - origin[1]) / PATH_PITCH_MM) == j, f"path {p}: y is not j"
+
+
+@needs_paths
+def test_the_lattice_is_the_width_of_the_response_block():
+    # p = i*10 + j is only meaningful if the block is 10 wide: the path count
+    # and the domain block have to describe the same grid.
+    block = domain_block(load_response(find_response(REFERENCE_ROOT)), len(path_starts()))
+
+    assert block.shape[:2] == (10, 10)
