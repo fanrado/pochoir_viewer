@@ -88,26 +88,33 @@ def partner_index(k: int, half: int) -> int:
     return k + half if k < half else k - half
 
 
-def pixel_traces(block: np.ndarray, i: int, j: int) -> dict[str, np.ndarray]:
-    """Return the four induced-current traces for the path starting at ``(i, j)``.
+def pixel_traces(block: np.ndarray, i: int, j: int) -> list[dict]:
+    """The four in-block partner traces for the path starting at ``(i, j)``.
 
-    A response row is indexed by the electron's STARTING position, not by the
-    pixel it lands on. By reciprocity the quarter of the domain a start falls
-    in identifies which pixel picks up the current, so the four pixels a single
-    path induces on are read from four different rows of the same block.
-
-    THE KEYS ARE RELATIVE TO THE ELECTRON'S OWN QUARTER, not to a fixed pixel
-    in the domain. ``central`` is the pixel whose quarter contains this start,
-    whichever quarter that is; ``neighbor_x`` is its partner across the
-    boundary along the first axis, and so on. For a start outside the first
-    quarter the name would otherwise be misleading.
-
-    The partner index mirrors about the quarter boundary (see
-    :func:`partner_index`), so with ``half = M // 2 = 5`` a start at ``(7, 2)``
+    Returns an ordered list of ``{"index": [a, b], "trace": ...}`` — the four
+    partners ``(i, j)``, ``(px, j)``, ``(i, py)``, ``(px, py)``, where the
+    partner index mirrors about the quarter boundary (:func:`partner_index`)
+    and ``half`` is derived from the block shape. So a start at ``(7, 2)``
     reads ``(7, 2)``, ``(2, 2)``, ``(7, 7)`` and ``(2, 7)``. Every ``(i, j)``
-    inside the block is valid; only indices outside the block are rejected.
+    inside the block is valid; only out-of-block indices are rejected.
 
-    ``half`` is derived from the block, never hardcoded.
+    KEYED BY BLOCK INDEX, DELIBERATELY, and asserting nothing about pad role.
+    Naming these 'central' / 'neighbor_x' / 'neighbor_y' / 'diagonal' claims
+    which pad collects the charge, and that claim rotates with the quarter: it
+    holds for the 25 starts in the first quarter and is wrong for the other 75,
+    which filed their collection trace under an induction heading. A
+    mislabelled plot still looks plausible, so the labelling is left to the
+    caller, which has the index pair and can name panels from it.
+
+    RECIPROCITY, now measured rather than assumed. Row ``(i, j)`` is the
+    current induced on ONE FIXED PAD by an electron starting at ``(i, j)``. A
+    start inside that pad's collecting quarter gives a UNIPOLAR trace — the
+    charge arrives — while a start outside it gives a BIPOLAR trace that
+    integrates to zero, pure induction as the electron passes. Measured on the
+    reference dataset: ``block[2, 3]`` has sum+ 2.000e-02 against sum- 2.7e-17
+    (collected), whereas ``block[7, 3]`` has sum+ = sum- = 8.184e-04 (induced
+    only). All 100 rows are distinct responses, so folding to the first quarter
+    would discard real data.
     """
     rows, cols = block.shape[0], block.shape[1]
     if not (0 <= i < rows and 0 <= j < cols):
@@ -117,12 +124,10 @@ def pixel_traces(block: np.ndarray, i: int, j: int) -> dict[str, np.ndarray]:
 
     px = partner_index(i, rows // 2)
     py = partner_index(j, cols // 2)
-    return {
-        "central": block[i, j],
-        "neighbor_x": block[px, j],
-        "neighbor_y": block[i, py],
-        "diagonal": block[px, py],
-    }
+    return [
+        {"index": [a, b], "trace": block[a, b]}
+        for a, b in ((i, j), (px, j), (i, py), (px, py))
+    ]
 
 
 def write_current(
