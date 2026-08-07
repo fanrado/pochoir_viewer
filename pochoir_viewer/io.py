@@ -102,6 +102,36 @@ def find_field(
     )
 
 
+def find_response(root: str | Path) -> Path:
+    """Resolve the field-response ``fr_*.npy`` at the top level of ``root``.
+
+    This is the one place the module globs, and the exception is deliberate
+    rather than an erosion of the exact-match rule stated in
+    :func:`find_field`. Every other array pochoir writes has a name fixed by
+    the tool, so it can be named outright; the response stem encodes the run
+    configuration (``fr_4p4pitch_3.8pix_nogrid_10pathsperpixel.npy`` in the
+    reference dataset) and is not knowable in advance. There is nothing to
+    match exactly against.
+
+    The glob is kept as tight as the unknown stem allows: ``root.glob`` at the
+    top level only, never ``rglob``, so nothing buried in a subdirectory can
+    be picked up. Zero matches raise FileNotFoundError; more than one raises
+    ValueError listing every candidate, so an ambiguous directory never
+    silently resolves to an arbitrary one of them.
+    """
+    root = Path(root)
+    matches = sorted(root.glob("fr_*.npy"))
+    if not matches:
+        raise FileNotFoundError(f"no field-response fr_*.npy in {root}")
+    if len(matches) > 1:
+        names = ", ".join(p.name for p in matches)
+        raise ValueError(
+            f"ambiguous field response in {root}: {len(matches)} candidates "
+            f"match fr_*.npy ({names}); remove or move all but one"
+        )
+    return matches[0]
+
+
 def find_drift(root: str | Path, subdir: str, kind: str = "field") -> Path:
     """Resolve the drift array in ``root/subdir``. See :func:`find_field`."""
     return find_field(root, subdir, field="drift", kind=kind)
