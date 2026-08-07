@@ -51,39 +51,50 @@ function traceAt({ meta, block }, i, j) {
 }
 
 /**
- * The four induced-current traces for the path starting at ``(i, j)``.
+ * Index of `k`'s partner in the other quarter along one axis.
  *
- * Browser-side mirror of `pixel_traces` in pochoir_viewer/current.py, and it
- * must stay in step with it. A response row is indexed by the electron's
- * STARTING position; by reciprocity the quarter that start falls in picks out
- * which pixel the current lands on, so the four pixels one path induces on are
- * four different rows of the same block, offset by PIXEL_OFFSET.
+ * Mirrors about the quarter boundary rather than always adding `half`: always
+ * adding runs off the end of the block for any `k >= half`, which is why three
+ * quarters of the domain used to throw. Same rule as `partner_index` in
+ * pochoir_viewer/current.py.
+ */
+export function partnerIndex(k, half) {
+  return k < half ? k + half : k - half;
+}
+
+/**
+ * The four in-block partner traces for the path starting at `(i, j)`.
  *
- * ``(i, j)`` must lie in the central quarter — outside it the offsets name a
- * different pair of pixels and would run off the end of the buffer.
+ * Browser-side mirror of `pixel_traces` in pochoir_viewer/current.py and it
+ * must stay in step with it. Returns an ordered array of
+ * `{index: [a, b], trace}` for the partners `(i, j)`, `(px, j)`, `(i, py)`,
+ * `(px, py)`, with `half` taken from the payload shape rather than hardcoded.
+ *
+ * KEYED BY BLOCK INDEX, DELIBERATELY. Names like `central` / `neighbor_x`
+ * assert which pad collects the charge, and that claim rotates with the
+ * quarter — it holds for the starts in the first quarter and is wrong for the
+ * rest, filing their collection trace under an induction heading. A
+ * mislabelled plot still looks plausible, so the caller does the labelling
+ * from the index pair.
+ *
+ * Every `(i, j)` inside the block is valid; only out-of-block indices throw.
  */
 export function tracesForPath(data, i, j) {
   const [rows, cols] = data.meta.shape;
-  if (!(i >= 0 && i < PIXEL_OFFSET && j >= 0 && j < PIXEL_OFFSET)) {
+  if (!(i >= 0 && i < rows && j >= 0 && j < cols)) {
     throw new RangeError(
-      `start (${i}, ${j}) is outside the central quarter ` +
-        `[0,${PIXEL_OFFSET}) — the reciprocity offsets are meaningless there`,
-    );
-  }
-  if (rows <= i + PIXEL_OFFSET || cols <= j + PIXEL_OFFSET) {
-    throw new RangeError(
-      `block is ${rows}x${cols}, too narrow for the +${PIXEL_OFFSET} ` +
-        `reciprocity offsets from (${i}, ${j})`,
+      `start (${i}, ${j}) is outside the ${rows}x${cols} block`,
     );
   }
 
-  const k = PIXEL_OFFSET;
-  return {
-    central: traceAt(data, i, j),
-    neighbor_x: traceAt(data, i + k, j),
-    neighbor_y: traceAt(data, i, j + k),
-    diagonal: traceAt(data, i + k, j + k),
-  };
+  const px = partnerIndex(i, Math.floor(rows / 2));
+  const py = partnerIndex(j, Math.floor(cols / 2));
+  return [
+    [i, j],
+    [px, j],
+    [i, py],
+    [px, py],
+  ].map(([a, b]) => ({ index: [a, b], trace: traceAt(data, a, b) }));
 }
 
 /** Time in microseconds at `tick`. The payload records the step; never guess it. */
