@@ -128,6 +128,11 @@
     background: #fff; border: 1px solid #bbb; border-radius: 3px;
     pointer-events: auto;
   }
+  #current-legend { margin-top: 4px; color: #444; font-size: 11px; }
+  .current-swatch {
+    display: inline-block; width: 10px; height: 10px; border: 1px solid #999;
+    vertical-align: middle;
+  }
   #current-play { width: 100%; margin-top: 6px; pointer-events: auto; }
 
   #readout {
@@ -264,6 +269,7 @@
     <canvas id="current-neighbor-y" aria-label="y-neighbour pixel"></canvas>
     <canvas id="current-diagonal" aria-label="diagonal neighbour pixel"></canvas>
   </div>
+  <div id="current-legend"></div>
   <button id="current-play">play</button>
 </div>
 

@@ -17,6 +17,39 @@ The first command reads a pochoir OUTPUT directory and writes a single
 has no data-assembly logic of its own. Re-run it whenever the OUTPUT directory
 changes. Generated data under `web/data/` is deliberately not committed.
 
+### Install
+
+```bash
+pip install -r requirements.txt
+```
+
+Both subcommands need **only numpy**.
+
+### Adding the potential view (optional)
+
+```bash
+python -m pochoir_viewer export-potential --root ../OUTPUT/store_largepix_wgrid --dest-dir web/data
+```
+
+This writes `potential.bin` (the raw float32 volume) and `potential.json`
+(metadata only, well under a kilobyte) beside `scene.json`. On the reference
+dataset the JSON is **181 bytes** for drift and **251 bytes** for weight; all the
+bulk is in the `.bin` (12.4 MB and 38.8 MB respectively).
+
+Earlier versions also precomputed equipotential isosurface meshes into that
+JSON, which made it 0.62 MB and 3.68 MB. The isosurfaces were removed, so **if
+you have an old `web/data` and an open browser tab, hard-reload it** — a cached
+payload carrying the old key still loads, but it is much larger than it needs to
+be.
+
+| flag | meaning |
+| --- | --- |
+| `--zstride N` | keep every Nth z sample: **12.4 MB** at `--zstride 1`, **3.1 MB** at `--zstride 4` |
+
+This step is **optional**. Without `potential.json` the viewer still runs
+normally with drift paths and boundary surfaces, and the **Potential slice**
+layer button renders disabled with a tooltip naming the command above.
+
 ## Regenerating the input data
 
 Everything the viewer fetches, in one place. Five products, three commands.
@@ -90,39 +123,6 @@ python -m pochoir_viewer export-potential --root $ROOT --dest-dir web/data
 python -m pochoir_viewer export-potential --root $ROOT --field weight --dest-dir web/data
 python -m pochoir_viewer export-current   --root $ROOT --dest-dir web/data --time-step 0.1
 ```
-
-### Install
-
-```bash
-pip install -r requirements.txt
-```
-
-Both subcommands need **only numpy**.
-
-### Adding the potential view (optional)
-
-```bash
-python -m pochoir_viewer export-potential --root ../OUTPUT/store_largepix_wgrid --dest-dir web/data
-```
-
-This writes `potential.bin` (the raw float32 volume) and `potential.json`
-(metadata only, well under a kilobyte) beside `scene.json`. On the reference
-dataset the JSON is **181 bytes** for drift and **251 bytes** for weight; all the
-bulk is in the `.bin` (12.4 MB and 38.8 MB respectively).
-
-Earlier versions also precomputed equipotential isosurface meshes into that
-JSON, which made it 0.62 MB and 3.68 MB. The isosurfaces were removed, so **if
-you have an old `web/data` and an open browser tab, hard-reload it** — a cached
-payload carrying the old key still loads, but it is much larger than it needs to
-be.
-
-| flag | meaning |
-| --- | --- |
-| `--zstride N` | keep every Nth z sample: **12.4 MB** at `--zstride 1`, **3.1 MB** at `--zstride 4` |
-
-This step is **optional**. Without `potential.json` the viewer still runs
-normally with drift paths and boundary surfaces, and the **Potential slice**
-layer button renders disabled with a tooltip naming the command above.
 
 ## Data assumptions
 
