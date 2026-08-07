@@ -115,12 +115,14 @@ def find_response(root: str | Path) -> Path:
 
     The glob is kept as tight as the unknown stem allows: ``root.glob`` at the
     top level only, never ``rglob``, so nothing buried in a subdirectory can
-    be picked up. Zero matches raise FileNotFoundError; more than one raises
+    be picked up, and non-files are dropped so a *directory* named
+    ``fr_something.npy`` neither resolves as the response nor counts towards
+    ambiguity. Zero matches raise FileNotFoundError; more than one raises
     ValueError listing every candidate, so an ambiguous directory never
     silently resolves to an arbitrary one of them.
     """
     root = Path(root)
-    matches = sorted(root.glob("fr_*.npy"))
+    matches = sorted(p for p in root.glob("fr_*.npy") if p.is_file())
     if not matches:
         raise FileNotFoundError(f"no field-response fr_*.npy in {root}")
     if len(matches) > 1:
