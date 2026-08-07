@@ -490,12 +490,13 @@ async function selectField(field) {
     try {
       const data = await fetchCurrent();
       currentView = createCurrentView(data);
-      currentView.setSelection([{ i: 0, j: 0 }]);
       currentView.nTicks = data.meta.shape[2];
+      currentView.meta = data.meta;
 
       driftAnim = createDriftAnim(sceneData.paths, data.meta.shape[2]);
       sceneRoot.add(driftAnim.points);
-      driftAnim.setSelected([0]);
+      wirePathSelector(data.meta);
+      applyPathSelection();
     } catch (error) {
       currentView = null;
       console.warn(
@@ -579,6 +580,85 @@ window.addEventListener("resize", () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
   viewCube.onResize();
 });
+
+/**
+ * Selected cells, keyed "i,j" so the set survives a repaint of the grid.
+ */
+const selectedPaths = new Set();
+
+/**
+ * Path id for grid cell (i, j).
+ *
+ * The block is (M, M, T) in C order and write_current emits `starts` in that
+ * same order, so cell (i, j) is path i*M + j. Deriving it keeps the selector,
+ * the dots and the traces reading one indexing rule.
+ */
+function pathIdFor(i, j, m) {
+  return i * m + j;
+}
+
+function pathCells() {
+  return [...document.querySelectorAll(".path-cell")];
+}
+
+/** Push the current selection to both consumers. */
+function applyPathSelection() {
+  const meta = currentView?.meta;
+  const m = meta?.shape?.[0] ?? 10;
+
+  const picks = [...selectedPaths].map((key) => {
+    const [i, j] = key.split(",").map(Number);
+    return { i, j };
+  });
+
+  currentView?.setSelection(picks);
+  driftAnim?.setSelected(picks.map(({ i, j }) => pathIdFor(i, j, m)));
+
+  // Back to the start on any change: a newly selected electron would otherwise
+  // pop into view mid-drift, at a tick it was never animated through.
+  pauseCurrent();
+  tick = 0;
+  driftAnim?.setTick(0);
+  currentView?.setCursor(0);
+}
+
+/**
+ * Attach the selector handlers and complete the cell titles.
+ *
+ * The static markup can only name {i, j}; the start position in mm lives in
+ * the payload, so it is appended here once that payload is known.
+ */
+function wirePathSelector(meta) {
+  const m = meta.shape[0];
+
+  // Open on one path rather than an empty panel: four blank canvases give no
+  // clue that anything is meant to appear in them.
+  if (selectedPaths.size === 0) selectedPaths.add("0,0");
+  for (const cell of pathCells()) {
+    const i = Number(cell.dataset.i);
+    const j = Number(cell.dataset.j);
+    const start = meta.starts?.[pathIdFor(i, j, m)];
+    if (start) {
+      const mm = start.map((v) => v.toFixed(2)).join(", ");
+      cell.title = `path (${i}, ${j}) — start ${mm} mm`;
+    }
+    cell.setAttribute("aria-pressed", String(selectedPaths.has(`${i},${j}`)));
+
+    cell.addEventListener("click", () => {
+      const key = `${i},${j}`;
+      if (selectedPaths.has(key)) selectedPaths.delete(key);
+      else selectedPaths.add(key);
+      cell.setAttribute("aria-pressed", String(selectedPaths.has(key)));
+      applyPathSelection();
+    });
+  }
+
+  document.getElementById("path-clear")?.addEventListener("click", () => {
+    selectedPaths.clear();
+    for (const cell of pathCells()) cell.setAttribute("aria-pressed", "false");
+    applyPathSelection();
+  });
+}
 
 const playButton = document.getElementById("current-play");
 playButton?.addEventListener("click", () => {
