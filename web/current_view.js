@@ -15,17 +15,24 @@ import {
 } from "./current_build.js";
 
 /**
- * Canvas id per trace key, in grid order.
+ * Canvases in grid order, addressed POSITIONALLY.
  *
- * Top-left central, top-right x-neighbour, bottom-left y-neighbour,
- * bottom-right diagonal — so the two panels on each diagonal of the grid are
- * the two pixels diagonal from each other in space.
+ * tracesForPath returns its four partners in a fixed order — (i, j), (px, j),
+ * (i, py), (px, py) — so panel n takes entry n and each panel is titled from
+ * its own entry's block index.
+ *
+ * Deliberately NOT keyed by pad role. Names like "central" assert which pad
+ * collects the charge, and that claim rotates with the quarter: it is right
+ * for a start in the first quarter and wrong for the other three, which is
+ * exactly the mislabelling behind pochoir_viewer-154c. The layout still mirrors
+ * pixel geometry — the two panels on each diagonal of the 2x2 are the two cells
+ * diagonal from each other in the block.
  */
 export const PANELS = [
-  { key: "central", id: "current-central", title: "central" },
-  { key: "neighbor_x", id: "current-neighbor-x", title: "x-neighbour" },
-  { key: "neighbor_y", id: "current-neighbor-y", title: "y-neighbour" },
-  { key: "diagonal", id: "current-diagonal", title: "diagonal" },
+  { id: "current-central" },
+  { id: "current-neighbor-x" },
+  { id: "current-neighbor-y" },
+  { id: "current-diagonal" },
 ];
 
 /**
@@ -77,8 +84,9 @@ function timeUnits(meta) {
 export function createCurrentView(data, doc = globalThis.document) {
   requireDocument(doc, "createCurrentView");
 
-  const canvases = PANELS.map((panel) => ({
+  const canvases = PANELS.map((panel, n) => ({
     ...panel,
+    slot: n,
     canvas: doc.getElementById(panel.id),
   }));
   const legend = doc.getElementById("current-legend");
@@ -95,14 +103,16 @@ export function createCurrentView(data, doc = globalThis.document) {
   function sharedPeak() {
     let peak = 0;
     for (const { i, j } of selection) {
-      const traces = tracesForPath(data, i, j);
-      const p = peakMagnitude(traces);
+      // peakMagnitude takes an iterable of numeric traces; the entries carry
+      // an index alongside, so hand it the traces alone rather than changing
+      // its contract.
+      const p = peakMagnitude(tracesForPath(data, i, j).map((e) => e.trace));
       if (p > peak) peak = p;
     }
     return peak;
   }
 
-  function drawPanel({ canvas, key, title }, peak) {
+  function drawPanel({ canvas, slot }, peak) {
     if (!canvas) return;
     const ctx = canvas.getContext?.("2d");
     if (!ctx) return;
@@ -126,8 +136,14 @@ export function createCurrentView(data, doc = globalThis.document) {
     ctx.lineTo(width, mid);
     ctx.stroke();
 
+    // Entry 0 is always the selected start's own cell. Titled from the first
+    // selected path: with several selected the partner sets differ, and the
+    // index shown is the one the leading curve belongs to.
+    let title = "";
     selection.forEach(({ i, j }, n) => {
-      const trace = tracesForPath(data, i, j)[key];
+      const entry = tracesForPath(data, i, j)[slot];
+      const trace = entry.trace;
+      if (n === 0) title = `[${entry.index[0]}, ${entry.index[1]}]`;
       ctx.strokeStyle = pathColor(n);
       ctx.lineWidth = 1;
       ctx.beginPath();
@@ -151,8 +167,13 @@ export function createCurrentView(data, doc = globalThis.document) {
     }
 
     ctx.fillStyle = "#444";
-    ctx.font = "10px system-ui, sans-serif";
-    ctx.fillText(title, 3, 10);
+    // Slot 0 is the electron's own cell, emphasised so it is identifiable
+    // WITHOUT claiming it is the collecting pad — that claim rotates with the
+    // quarter.
+    ctx.font = slot === 0
+      ? "bold 10px system-ui, sans-serif"
+      : "10px system-ui, sans-serif";
+    ctx.fillText(slot === 0 ? `${title} (start)` : title, 3, 10);
 
     // Time axis is labelled in physical units from the payload, never ticks.
     const span = tickToUs(data.meta.shape[2] - 1, data.meta);
