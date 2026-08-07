@@ -205,162 +205,164 @@ def test_n_and_m_are_derived_rather_than_assumed():
 
 
 # --- pixel_traces ------------------------------------------------------------
+#
+# a580d01 changed the return to an ordered list of {"index": [a, b], "trace"}
+# and deliberately dropped the central/neighbor_x/neighbor_y/diagonal names.
+# That was the right call and it is worth recording why, because the names are
+# the obvious thing to reintroduce: they assert which pad collects the charge,
+# and that assertion rotates with the quarter. It held for the 25 starts in the
+# first quarter and was wrong for the other 75, which filed their collection
+# trace under an induction heading -- and a mislabelled plot looks plausible.
+# The tests below therefore check INDICES and measured physics, never a role.
 
 
 def block10(t: int = 3) -> np.ndarray:
     return domain_block(labelled(10, t), 100)
 
 
-def test_the_four_named_traces_are_returned():
+def indices(traces) -> list[tuple[int, int]]:
+    return [tuple(entry["index"]) for entry in traces]
+
+
+def test_four_partner_traces_are_returned():
     traces = pixel_traces(block10(), 0, 0)
 
-    assert set(traces) == {"central", "neighbor_x", "neighbor_y", "diagonal"}
+    assert len(traces) == 4
+    assert all(set(entry) == {"index", "trace"} for entry in traces)
 
 
-def test_each_trace_is_the_row_the_docstring_names():
+def test_the_partners_are_the_cells_the_docstring_names():
+    # "a start at (7, 2) reads (7, 2), (2, 2), (7, 7) and (2, 7)".
+    assert indices(pixel_traces(block10(), 7, 2)) == [(7, 2), (2, 2), (7, 7), (2, 7)]
+
+
+def test_the_order_is_start_then_x_then_y_then_both():
+    # The order is the contract now that there are no keys: a caller labels
+    # panels from position, so a reordering would silently swap two plots.
+    assert indices(pixel_traces(block10(), 1, 2)) == [(1, 2), (6, 2), (1, 7), (6, 7)]
+
+
+def test_the_first_entry_is_always_the_start_itself():
     block = block10()
-    i, j = 2, 3
 
-    traces = pixel_traces(block, i, j)
-
-    assert traces["central"][0] == 203
-    assert traces["neighbor_x"][0] == 703  # (i + 5, j)
-    assert traces["neighbor_y"][0] == 208  # (i, j + 5)
-    assert traces["diagonal"][0] == 708  # (i + 5, j + 5)
+    for i in (0, 4, 5, 9):
+        for j in (0, 4, 5, 9):
+            assert indices(pixel_traces(block, i, j))[0] == (i, j)
 
 
-def test_the_offsets_are_the_module_constant_not_a_literal():
-    # If PIXEL_OFFSET moves, the traces must move with it; a hardcoded 5 in
-    # the body would leave the constant lying about what is drawn.
+def test_each_trace_is_the_cell_its_index_names():
+    # The pairing is the whole payload; a trace under the wrong index is the
+    # mislabelling this shape exists to prevent.
     block = block10()
-    i, j = 1, 1
 
-    traces = pixel_traces(block, i, j)
-
-    np.testing.assert_array_equal(traces["neighbor_x"], block[i + PIXEL_OFFSET, j])
-    np.testing.assert_array_equal(traces["neighbor_y"], block[i, j + PIXEL_OFFSET])
+    for entry in pixel_traces(block, 3, 4):
+        a, b = entry["index"]
+        np.testing.assert_array_equal(entry["trace"], block[a, b])
 
 
-def test_the_four_traces_are_four_distinct_rows():
-    # The reciprocity claim: one path induces on four pixels, read from four
-    # different source rows rather than four copies of one.
-    traces = pixel_traces(block10(), 4, 4)
+def test_no_role_names_are_reintroduced():
+    # A regression guard with a reason: see the module note above and
+    # pochoir_viewer-154c.
+    traces = pixel_traces(block10(), 7, 3)
 
-    firsts = {float(v[0]) for v in traces.values()}
-    assert len(firsts) == 4
-
-
-def test_a_trace_keeps_the_full_sample_axis():
-    traces = pixel_traces(block10(t=3999), 0, 0)
-
-    assert all(v.shape == (3999,) for v in traces.values())
+    for entry in traces:
+        assert "central" not in entry
+        assert "neighbor_x" not in entry
 
 
 def test_the_traces_are_views_not_copies():
-    # Cheap to plot many of; also documents that mutating one edits the block.
-    block = block10()
-    traces = pixel_traces(block, 0, 0)
-
-    assert traces["central"].base is not None
-
-
-def test_every_position_in_the_central_quarter_is_accepted():
     block = block10()
 
-    for i in range(PIXEL_OFFSET):
-        for j in range(PIXEL_OFFSET):
-            assert pixel_traces(block, i, j)["central"][0] == i * 100 + j
+    entry = pixel_traces(block, 0, 0)[0]
+
+    assert entry["trace"].base is not None
 
 
-@pytest.mark.parametrize("i, j", [(-1, 0), (0, -1), (10, 0), (0, 10), (99, 99)])
-def test_a_start_outside_the_block_is_refused(i, j):
-    # 94799a9 opened every quarter; only indices off the block are invalid now.
-    with pytest.raises(ValueError, match="outside the"):
-        pixel_traces(block10(), i, j)
+def test_a_trace_keeps_the_full_sample_axis():
+    for entry in pixel_traces(block10(t=3999), 0, 0):
+        assert entry["trace"].shape == (3999,)
 
 
-def test_the_refusal_names_the_position_and_the_block(i=12, j=2):
-    with pytest.raises(ValueError, match=r"\(12, 2\).*10x10"):
-        pixel_traces(block10(), i, j)
+def test_the_four_cells_are_distinct_in_every_quarter():
+    block = block10()
+
+    for i in range(10):
+        for j in range(10):
+            assert len(set(indices(pixel_traces(block, i, j)))) == 4, f"({i}, {j})"
 
 
-def test_every_start_in_the_block_is_now_accepted():
+def test_every_start_in_the_block_is_accepted():
     # The point of 94799a9: three quarters of the domain used to raise.
     block = block10()
 
     for i in range(10):
         for j in range(10):
-            assert set(pixel_traces(block, i, j)) == {
-                "central", "neighbor_x", "neighbor_y", "diagonal"
-            }
+            assert len(pixel_traces(block, i, j)) == 4
+
+
+@pytest.mark.parametrize("i, j", [(-1, 0), (0, -1), (10, 0), (0, 10), (99, 99)])
+def test_a_start_outside_the_block_is_refused(i, j):
+    with pytest.raises(ValueError, match="outside the"):
+        pixel_traces(block10(), i, j)
+
+
+def test_the_refusal_names_the_position_and_the_block():
+    with pytest.raises(ValueError, match=r"\(12, 2\).*10x10"):
+        pixel_traces(block10(), 12, 2)
 
 
 def test_the_partner_relation_is_its_own_inverse():
-    # partner(partner(k)) == k, or the four traces would not be a closed set
-    # of two pixel pairs.
+    # partner(partner(k)) == k, or the four cells would not close into two
+    # pairs.
     for half in (2, 5, 8):
         for k in range(2 * half):
             assert partner_index(partner_index(k, half), half) == k
 
 
 def test_the_partner_mirrors_rather_than_always_adding():
+    # Always adding is what ran off the end of the block for k >= half.
     assert partner_index(2, 5) == 7
     assert partner_index(7, 5) == 2
 
 
 def test_the_half_width_is_derived_from_the_block():
-    # "half is derived from the block, never hardcoded": a 6x6 block must use
-    # 3, not PIXEL_OFFSET.
+    # "half is derived from the block shape": a 6x6 block must use 3.
     block = domain_block(labelled(6), 36)
 
-    traces = pixel_traces(block, 1, 1)
-
-    assert traces["neighbor_x"][0] == block[4, 1, 0]
-
-
-def test_the_first_quarter_is_unchanged_by_the_generalisation():
-    # Whatever else moved, the 25 starts that already worked must read the
-    # same four cells as before.
-    block = block10()
-
-    for i in range(PIXEL_OFFSET):
-        for j in range(PIXEL_OFFSET):
-            traces = pixel_traces(block, i, j)
-            assert traces["central"][0] == block[i, j, 0]
-            assert traces["neighbor_x"][0] == block[i + PIXEL_OFFSET, j, 0]
-            assert traces["neighbor_y"][0] == block[i, j + PIXEL_OFFSET, 0]
-            assert traces["diagonal"][0] == block[i + PIXEL_OFFSET, j + PIXEL_OFFSET, 0]
-
-
-def test_the_four_traces_stay_distinct_in_every_quarter():
-    block = block10()
-
-    for i, j in [(7, 2), (2, 7), (7, 7), (9, 9)]:
-        firsts = {float(v[0]) for v in pixel_traces(block, i, j).values()}
-        assert len(firsts) == 4, f"({i}, {j}) returned duplicate cells"
-
-
-# --- the assumption the docstring flags --------------------------------------
+    assert indices(pixel_traces(block, 1, 1)) == [(1, 1), (4, 1), (1, 4), (4, 4)]
 
 
 def test_a_narrow_block_no_longer_indexes_out_of_range():
-    # This used to die on a bare numpy IndexError: the guard checked i and j
-    # against PIXEL_OFFSET but never the block width. 94799a9 derives the
-    # half-width from the block, which closes it.
+    # This used to die on a bare numpy IndexError: the old guard checked i and
+    # j against PIXEL_OFFSET but never the block width.
     small = domain_block(labelled(10), 16)
 
-    traces = pixel_traces(small, 0, 0)
+    assert indices(pixel_traces(small, 0, 0)) == [(0, 0), (2, 0), (0, 2), (2, 2)]
 
-    assert traces["neighbor_x"][0] == small[2, 0, 0]
+
+def test_pixel_offset_is_half_the_reference_domain_width():
+    # Kept as the documented value for the 10-wide domain even though
+    # pixel_traces no longer reads it.
+    assert PIXEL_OFFSET == 5
+
+
+def test_the_four_cells_are_the_same_set_across_a_quarter_group():
+    # Not a defect -- a property worth stating, because it is what makes the
+    # selector's extra 75 cells redundant rather than informative. Every start
+    # in a quarter group reads the same four cells; only the order differs.
+    block = block10()
+    base = set(indices(pixel_traces(block, 2, 3)))
+
+    for i, j in [(7, 3), (2, 8), (7, 8)]:
+        assert set(indices(pixel_traces(block, i, j))) == base
 
 
 # --- against the real dataset ------------------------------------------------
 #
 # The reference dataset lives outside the repo, so these skip when it is
-# absent. They are worth the exception because the +5 reciprocity offsets are
-# the one thing in this module that no synthetic fixture can validate: a
-# labelled grid proves the indexing is self-consistent, not that it names the
-# right pixels. Physics can.
+# absent. They are worth the exception because the reciprocity behaviour is the
+# one thing no synthetic fixture can settle: a labelled grid proves the
+# indexing is self-consistent, not that it describes the physics.
 
 REFERENCE_ROOT = Path(__file__).resolve().parent.parent.parent / "OUTPUT" / "store_largepix_wgrid"
 have_reference = REFERENCE_ROOT.is_dir()
@@ -369,60 +371,94 @@ needs_reference = pytest.mark.skipif(
 )
 
 
+def reference_block():
+    return domain_block(load_response(find_response(REFERENCE_ROOT)), 100)
+
+
 @needs_reference
 def test_the_reference_response_matches_the_documented_shape():
-    response = load_response(find_response(REFERENCE_ROOT))
-
-    assert response.shape == REFERENCE_SHAPE
+    assert load_response(find_response(REFERENCE_ROOT)).shape == REFERENCE_SHAPE
 
 
 @needs_reference
 def test_the_reference_response_yields_the_ten_wide_domain():
-    block = domain_block(load_response(find_response(REFERENCE_ROOT)), 100)
-
-    assert block.shape == (10, 10, REFERENCE_SHAPE[1])
+    assert reference_block().shape == (10, 10, REFERENCE_SHAPE[1])
 
 
 @needs_reference
-def test_the_central_trace_dominates_its_neighbours():
-    # The reciprocity check. If the +5 offsets named the wrong rows there
-    # would be no reason for this ordering to hold: collection on the central
-    # pixel is an order of magnitude above the induced neighbour signals, and
-    # the diagonal -- furthest away -- is the smallest of the four.
-    block = domain_block(load_response(find_response(REFERENCE_ROOT)), 100)
-    traces = pixel_traces(block, 2, 3)
-    peak = {k: float(np.abs(v).max()) for k, v in traces.items()}
+def test_a_start_in_the_collecting_quarter_gives_a_unipolar_trace():
+    # a580d01's measured claim, restated as a test: row (i, j) is the current
+    # on ONE FIXED pad from an electron starting at (i, j). Inside that pad's
+    # collecting quarter the charge arrives, so the trace never changes sign.
+    block = reference_block()
+    trace = block[2, 3]
 
-    assert peak["central"] > 5 * peak["neighbor_x"]
-    assert peak["central"] > 5 * peak["neighbor_y"]
-    assert peak["diagonal"] < peak["neighbor_x"]
-    assert peak["diagonal"] < peak["neighbor_y"]
+    positive = trace[trace > 0].sum()
+    negative = abs(trace[trace < 0].sum())
+    assert positive > 1e-3, f"collected sum+ is only {positive}"
+    assert negative < positive * 1e-9, f"collected trace swings negative: {negative}"
 
 
 @needs_reference
-def test_the_two_neighbours_are_comparable_to_each_other():
-    # x and y are symmetric in the geometry, so a swapped or duplicated offset
-    # would most likely show up as one of them collapsing.
-    block = domain_block(load_response(find_response(REFERENCE_ROOT)), 100)
-    traces = pixel_traces(block, 2, 3)
-    x = float(np.abs(traces["neighbor_x"]).max())
-    y = float(np.abs(traces["neighbor_y"]).max())
+def test_a_start_outside_it_gives_a_bipolar_trace_integrating_to_zero():
+    # Pure induction as the electron passes: the two lobes must cancel.
+    block = reference_block()
+    trace = block[7, 3]
 
-    assert 0.5 < x / y < 2.0, f"neighbour peaks are lopsided: x={x}, y={y}"
+    positive = trace[trace > 0].sum()
+    negative = abs(trace[trace < 0].sum())
+    assert abs(positive - negative) < positive * 1e-6, (
+        f"induced trace does not integrate to zero: +{positive} -{negative}"
+    )
 
 
 @needs_reference
-def test_the_central_trace_is_a_unipolar_collection_signal():
-    # Collection integrates to the drifted charge; the induced neighbour
-    # traces are bipolar and integrate to near zero. That difference is the
-    # clearest evidence the central row is the one being collected on.
-    block = domain_block(load_response(find_response(REFERENCE_ROOT)), 100)
-    traces = pixel_traces(block, 2, 3)
+def test_the_collected_trace_dominates_the_induced_one():
+    block = reference_block()
 
-    central = traces["central"]
-    assert central.min() > -1e-9, "the central trace swings negative"
-    for name in ("neighbor_x", "neighbor_y"):
-        assert traces[name].min() < 0, f"{name} is not bipolar"
+    assert np.abs(block[2, 3]).max() > 5 * np.abs(block[7, 3]).max()
+
+
+@needs_reference
+def test_exactly_one_of_the_four_partners_is_a_collection():
+    # Whatever the caller labels them, each set of four contains one arriving
+    # charge and three inductions. That is the invariant a panel layout can
+    # safely be built on.
+    block = reference_block()
+
+    for i, j in [(2, 3), (7, 3), (2, 8), (7, 8), (0, 0), (9, 9)]:
+        collected = [
+            entry
+            for entry in pixel_traces(block, i, j)
+            if entry["trace"].min() > -1e-9
+        ]
+        assert len(collected) == 1, (
+            f"({i}, {j}) has {len(collected)} unipolar traces, expected exactly 1"
+        )
+
+
+@needs_reference
+def test_all_one_hundred_rows_are_distinct_responses():
+    # a580d01 relies on this: the rows are not copies of one quarter.
+    block = reference_block()
+    seen = {block[i, j].tobytes() for i in range(10) for j in range(10)}
+
+    assert len(seen) == 100
+
+
+@needs_reference
+def test_the_four_partner_cells_repeat_across_a_quarter_group():
+    # The redundancy noted synthetically above, confirmed on real data: 100
+    # starts, 25 distinct sets of four. Relevant to pochoir_viewer-u9ht --
+    # the extra cells are redundant rather than invalid.
+    block = reference_block()
+    sets = {
+        frozenset(tuple(e["index"]) for e in pixel_traces(block, i, j))
+        for i in range(10)
+        for j in range(10)
+    }
+
+    assert len(sets) == 25
 
 
 # --- the path index orientation ----------------------------------------------
@@ -491,85 +527,3 @@ def test_the_lattice_is_the_width_of_the_response_block():
     block = domain_block(load_response(find_response(REFERENCE_ROOT)), len(path_starts()))
 
     assert block.shape[:2] == (10, 10)
-
-
-# --- does the generalisation put the collection on the right panel? ----------
-#
-# 94799a9 opened all four quarters, and its docstring claims the keys are
-# relative to the electron's own quarter: "central is the pixel whose quarter
-# contains this start, whichever quarter that is".
-#
-# The real data disagrees. The collecting pad's trace is unipolar and an order
-# of magnitude above the three induced ones -- that signature is what
-# identifies it, and it does NOT stay on the `central` key outside the first
-# quarter. Measured over all 100 starts, the key carrying it is:
-#
-#     C C C C C Y Y Y Y Y      rows are i, columns are j
-#     ...                      (5 rows of C/Y, then 5 of X/D)
-#     X X X X X D D D D D
-#
-# i.e. exactly the quarter (i//5, j//5). So for 75 of the 100 starts the panel
-# labelled "central" shows a neighbour's induced current while one of the
-# neighbour panels shows the collection. That is worse than the RangeError it
-# replaced: a mislabelled plot looks entirely correct.
-#
-# The fix is to FOLD the start into the first quarter rather than mirror the
-# partner: central = block[i % half, j % half], partners at +half. Verified
-# against the dataset -- folding (7, 3) to (2, 3) recovers the unipolar
-# 1.87e-3 collection trace that the current code files under neighbor_x.
-
-
-@needs_reference
-def test_the_central_panel_carries_the_collection_in_every_quarter():
-    block = domain_block(load_response(find_response(REFERENCE_ROOT)), 100)
-
-    def collecting_key(i, j):
-        traces = pixel_traces(block, i, j)
-        return max(traces, key=lambda k: np.abs(traces[k]).max())
-
-    wrong = [
-        (i, j, collecting_key(i, j))
-        for i in range(10)
-        for j in range(10)
-        if collecting_key(i, j) != "central"
-    ]
-
-    assert wrong == [], (
-        f"{len(wrong)} of 100 starts put the collection signal on a neighbour "
-        f"panel; e.g. {wrong[:3]}"
-    )
-
-
-@needs_reference
-def test_the_central_trace_is_unipolar_wherever_the_start_is():
-    # The same defect stated physically rather than by ranking: collection
-    # integrates the drifted charge and never changes sign; the induced
-    # neighbour traces are bipolar.
-    block = domain_block(load_response(find_response(REFERENCE_ROOT)), 100)
-
-    bipolar = [
-        (i, j)
-        for i in range(10)
-        for j in range(10)
-        if pixel_traces(block, i, j)["central"].min() < -1e-9
-    ]
-
-    assert bipolar == [], (
-        f"the central panel is bipolar for {len(bipolar)} starts, so it is "
-        f"not showing a collection signal; e.g. {bipolar[:3]}"
-    )
-
-
-@needs_reference
-def test_folding_into_the_first_quarter_would_recover_the_collection():
-    # Not a demand for this exact implementation -- evidence that the fix is
-    # available and that the physics is symmetric, so every pad sees the same
-    # four traces at the same relative start.
-    block = domain_block(load_response(find_response(REFERENCE_ROOT)), 100)
-    half = block.shape[0] // 2
-
-    for i, j in [(7, 3), (2, 8), (7, 8), (9, 9)]:
-        folded = pixel_traces(block, i % half, j % half)
-        assert folded["central"].min() > -1e-9, f"({i}, {j}) folded is not unipolar"
-        peaks = {k: float(np.abs(v).max()) for k, v in folded.items()}
-        assert peaks["central"] > 5 * peaks["neighbor_x"], f"({i}, {j}) folded"
