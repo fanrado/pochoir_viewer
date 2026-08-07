@@ -13,6 +13,7 @@ import assert from "node:assert/strict";
 import {
   PIXEL_OFFSET,
   fetchCurrent,
+  partnerIndex,
   peakMagnitude,
   tickToUs,
   tickToX,
@@ -49,107 +50,148 @@ function payload(m = M, t = T) {
   };
 }
 
-// --- tracesForPath: the four rows -------------------------------------------
+// --- tracesForPath: the four partner cells -----------------------------------
+//
+// fc45c69 brings the browser helper in step with a580d01: an ordered array of
+// {index, trace}, no pad-role names. The names are the obvious thing to add
+// back and they were wrong for 75 of 100 starts, so the tests check indices,
+// never a role.
 
-test("the four keys match the Python side's", () => {
+const indices = (traces) => traces.map((entry) => entry.index.join(","));
+
+test("four partner traces are returned", () => {
   const traces = tracesForPath(payload(), 0, 0);
 
-  assert.deepEqual(Object.keys(traces).sort(), [
-    "central",
-    "diagonal",
-    "neighbor_x",
-    "neighbor_y",
-  ]);
+  assert.equal(traces.length, 4);
+  for (const entry of traces) {
+    assert.deepEqual(Object.keys(entry).sort(), ["index", "trace"]);
+  }
 });
 
-test("each trace is the cell the reciprocity offsets name", () => {
-  const traces = tracesForPath(payload(), 2, 3);
-
-  assert.equal(traces.central[0], 203);
-  assert.equal(traces.neighbor_x[0], 703);
-  assert.equal(traces.neighbor_y[0], 208);
-  assert.equal(traces.diagonal[0], 708);
+test("the partners are the cells the docstring names", () => {
+  // "a start at (7, 2) reads (7, 2), (2, 2), (7, 7) and (2, 7)".
+  assert.deepEqual(indices(tracesForPath(payload(), 7, 2)), ["7,2", "2,2", "7,7", "2,7"]);
 });
 
-test("the offsets follow PIXEL_OFFSET rather than a literal 5", () => {
+test("the order is start, then x-partner, then y-partner, then both", () => {
+  // With no keys the ORDER is the contract: the caller labels panels by
+  // position, so a reordering would silently swap two plots.
+  assert.deepEqual(indices(tracesForPath(payload(), 1, 2)), ["1,2", "6,2", "1,7", "6,7"]);
+});
+
+test("the first entry is always the start itself", () => {
   const data = payload();
-  const i = 1;
-  const j = 1;
 
-  const traces = tracesForPath(data, i, j);
-
-  const at = (a, b) => data.block[(a * M + b) * T];
-  assert.equal(traces.neighbor_x[0], at(i + PIXEL_OFFSET, j));
-  assert.equal(traces.neighbor_y[0], at(i, j + PIXEL_OFFSET));
+  for (const i of [0, 4, 5, 9]) {
+    for (const j of [0, 4, 5, 9]) {
+      assert.equal(indices(tracesForPath(data, i, j))[0], `${i},${j}`);
+    }
+  }
 });
 
-test("PIXEL_OFFSET agrees with the Python constant", () => {
-  // The two modules index the same buffer; a drift between them would read
-  // real numbers from the wrong pixel.
+test("each trace is the cell its index names", () => {
+  const data = payload();
+
+  for (const entry of tracesForPath(data, 3, 4)) {
+    const [a, b] = entry.index;
+    assert.equal(entry.trace[0], a * 100 + b);
+  }
+});
+
+test("the JS and Python partner rules agree", () => {
+  // The two index the same buffer; a drift between them would read real
+  // numbers from the wrong cell.
+  assert.equal(partnerIndex(2, 5), 7);
+  assert.equal(partnerIndex(7, 5), 2);
+});
+
+test("the partner relation is its own inverse", () => {
+  for (const half of [2, 5, 8]) {
+    for (let k = 0; k < 2 * half; k++) {
+      assert.equal(partnerIndex(partnerIndex(k, half), half), k);
+    }
+  }
+});
+
+test("no role names are reintroduced", () => {
+  // A regression guard with a reason: see pochoir_viewer-154c.
+  for (const entry of tracesForPath(payload(), 7, 3)) {
+    assert.equal("central" in entry, false);
+    assert.equal("neighbor_x" in entry, false);
+  }
+});
+
+test("PIXEL_OFFSET remains the reference domain's half-width", () => {
+  // Kept as documentation for the 10-wide domain; tracesForPath derives half
+  // from the payload shape instead.
   assert.equal(PIXEL_OFFSET, 5);
+});
+
+test("half is taken from the payload, not from PIXEL_OFFSET", () => {
+  // A 4x4 block must use 2. This is also the narrow-block case that used to
+  // run off the end of the buffer.
+  assert.deepEqual(indices(tracesForPath(payload(4, T), 0, 0)), ["0,0", "2,0", "0,2", "2,2"]);
 });
 
 test("a trace is the whole tick run for its cell", () => {
   const traces = tracesForPath(payload(), 0, 0);
 
-  assert.equal(traces.central.length, T);
-  assert.deepEqual([...traces.central], [0, 1, 2, 3]);
+  assert.equal(traces[0].trace.length, T);
+  assert.deepEqual([...traces[0].trace], [0, 1, 2, 3]);
 });
 
 test("the traces are views, not copies", () => {
-  // subarray, so drawing many selected paths does not allocate per frame.
   const data = payload();
 
   const traces = tracesForPath(data, 0, 0);
 
-  assert.equal(traces.central.buffer, data.block.buffer);
+  assert.equal(traces[0].trace.buffer, data.block.buffer);
 });
 
-test("the four traces are four distinct cells", () => {
-  const traces = tracesForPath(payload(), 4, 4);
-
-  const firsts = new Set(Object.values(traces).map((t) => t[0]));
-  assert.equal(firsts.size, 4);
-});
-
-test("every start in the central quarter works", () => {
+test("the four cells are distinct in every quarter", () => {
   const data = payload();
 
-  for (let i = 0; i < PIXEL_OFFSET; i++) {
-    for (let j = 0; j < PIXEL_OFFSET; j++) {
-      assert.equal(tracesForPath(data, i, j).central[0], i * 100 + j);
+  for (let i = 0; i < M; i++) {
+    for (let j = 0; j < M; j++) {
+      assert.equal(new Set(indices(tracesForPath(data, i, j))).size, 4, `(${i}, ${j})`);
     }
+  }
+});
+
+test("every start inside the block is accepted", () => {
+  // Three quarters of the domain used to throw.
+  const data = payload();
+
+  for (let i = 0; i < M; i++) {
+    for (let j = 0; j < M; j++) {
+      assert.equal(tracesForPath(data, i, j).length, 4);
+    }
+  }
+});
+
+test("the four cells repeat across a quarter group", () => {
+  // Not a defect -- the property that makes the selector's extra 75 cells
+  // redundant rather than informative. Relevant to pochoir_viewer-u9ht.
+  const data = payload();
+  const key = (i, j) => [...indices(tracesForPath(data, i, j))].sort().join(" ");
+
+  for (const [i, j] of [[7, 3], [2, 8], [7, 8]]) {
+    assert.equal(key(i, j), key(2, 3), `(${i}, ${j})`);
   }
 });
 
 // --- tracesForPath: the refusals --------------------------------------------
 
-test("a start outside the central quarter is refused", () => {
+test("a start outside the block is refused", () => {
   const data = payload();
 
-  for (const [i, j] of [[5, 0], [0, 5], [9, 9], [-1, 0], [0, -1]]) {
-    assert.throws(() => tracesForPath(data, i, j), /central quarter/, `(${i}, ${j})`);
+  for (const [i, j] of [[-1, 0], [0, -1], [10, 0], [0, 10], [99, 99]]) {
+    assert.throws(() => tracesForPath(data, i, j), /outside the/, `(${i}, ${j})`);
   }
 });
 
-test("the refusal names the position", () => {
-  assert.throws(() => tracesForPath(payload(), 7, 2), /\(7, 2\)/);
-});
-
-test("a block too narrow for the offsets is refused, not left to run off the end", () => {
-  // The Python side has this gap: pixel_traces there guards i and j but not
-  // the block width, and dies on a bare IndexError. This module closes it,
-  // which is the behaviour to keep.
-  assert.throws(() => tracesForPath(payload(4, T), 0, 0), /too narrow/);
-});
-
-test("the narrow-block refusal reports the block size", () => {
-  assert.throws(() => tracesForPath(payload(4, T), 0, 0), /4x4/);
-});
-
-test("a block exactly wide enough is accepted", () => {
-  // The boundary: 10 wide is the smallest that admits a start at (4, 4).
-  assert.doesNotThrow(() => tracesForPath(payload(10, T), 4, 4));
+test("the refusal names the position and the block", () => {
+  assert.throws(() => tracesForPath(payload(), 12, 2), /\(12, 2\).*10x10/);
 });
 
 // --- peakMagnitude: the shared scale ----------------------------------------
@@ -181,11 +223,28 @@ test("an empty set of traces peaks at zero", () => {
 
 test("the peak spans the traces rather than being taken per trace", () => {
   // The whole point of a shared scale: the small trace must not set it.
-  const traces = tracesForPath(payload(), 0, 0);
+  // NOTE peakMagnitude still iterates Object.values, which over the new array
+  // form yields the {index, trace} entries rather than numeric traces. Passing
+  // tracesForPath's result straight in no longer works -- pinned below.
+  const traces = tracesForPath(payload(), 0, 0).map((e) => e.trace);
 
   assert.equal(
     peakMagnitude(traces),
-    Math.max(...Object.values(traces).flatMap((t) => [...t].map(Math.abs))),
+    Math.max(...traces.flatMap((t) => [...t].map(Math.abs))),
+  );
+});
+
+test("peakMagnitude was NOT updated for the new tracesForPath shape", () => {
+  // fc45c69 changed tracesForPath's return but left peakMagnitude expecting a
+  // collection of raw traces. Feeding it the new form iterates {index, trace}
+  // objects, and `for (const v of trace)` throws on one. Pinned as today's
+  // behaviour so the mismatch is visible rather than latent; a caller must
+  // map to .trace first. current_view.js does NOT -- see the report on
+  // fc45c69. If peakMagnitude is taught the new shape, this becomes
+  // doesNotThrow.
+  assert.throws(
+    () => peakMagnitude(tracesForPath(payload(), 0, 0)),
+    /not iterable/,
   );
 });
 
