@@ -26,6 +26,8 @@ import {
   voxelReading,
   wireSliceControls,
 } from "./potential_view.js";
+import { fetchCurrent } from "./current_build.js";
+import { createCurrentView } from "./current_view.js";
 
 const scene_data = await (await fetch("data/scene.json")).json();
 console.log(scene_data.meta);
@@ -371,6 +373,9 @@ function disable(id, title) {
 
 let currentField = "drift";
 
+/** The induced-current view, or null while its payload is absent. */
+let currentView = null;
+
 /**
  * Swap every field-dependent object.
  *
@@ -392,6 +397,41 @@ async function selectField(field) {
   pathsButton.disabled = !hasPaths;
   pathsButton.title = hasPaths ? "" : "no drift paths in the weighting domain";
   pathLines.visible = hasPaths && pressed("layer-paths");
+
+  // Induced current is meaningless without drift paths, so the whole panel is
+  // disabled for the weighting domain rather than left showing drift's traces
+  // under a weighting scene. Mirrors the layer-paths treatment above.
+  const currentPanel = document.getElementById("current-panel");
+  if (currentPanel) {
+    const why = "no drift paths in the weighting domain";
+    currentPanel.title = hasPaths ? "" : why;
+    // Dimmed inline rather than via a CSS class so this step stays inside
+    // viewer.js; the tooltip is what actually explains the state.
+    currentPanel.style.opacity = hasPaths ? "" : "0.5";
+    const play = document.getElementById("current-play");
+    if (play) {
+      play.disabled = !hasPaths;
+      play.title = hasPaths ? "" : why;
+    }
+  }
+
+  if (hasPaths) {
+    // Same opt-in-absent handling as the potential payload: a missing
+    // current.json is a normal state for a dataset that has not been exported
+    // with export-current, not an error worth breaking the page over.
+    try {
+      const data = await fetchCurrent();
+      currentView = createCurrentView(data);
+      currentView.setSelection([{ i: 0, j: 0 }]);
+    } catch (error) {
+      currentView = null;
+      console.warn(
+        `induced-current panel unavailable (${error.message}); ` +
+          "run: python -m pochoir_viewer export-current",
+      );
+      disable("current-play", "run: python -m pochoir_viewer export-current");
+    }
+  }
 
   try {
     const { meta, volume } = await loadPotential(field);
