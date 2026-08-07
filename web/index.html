@@ -102,6 +102,34 @@
     border-radius: 3px; padding: 0 3px;
   }
 
+  /* The view cube is NOT a DOM element — it is a scissor viewport drawn
+     inside #view at SIZE_PX = 96, INSET_PX = 12 from the top-right
+     (viewcube.js:9-10). So this panel clears it at 12 + 96 + 12 = 120px.
+     Changing either constant means changing this offset. */
+  #current-panel {
+    position: fixed; top: 120px; right: 12px; width: 260px; padding: 8px;
+    background: rgba(255, 255, 255, 0.92); border-radius: 6px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+    box-sizing: border-box;
+    /* MANDATORY. The cube sits directly above and orbit runs on the whole
+       canvas, so a drag starting on the panel's padding or grid gaps would
+       otherwise be swallowed here instead of rotating the scene. Only the
+       interactive children opt back in. */
+    pointer-events: none;
+  }
+  #current-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 4px;
+  }
+  /* The 2x2 grid mirrors the pixels in space: the central pixel is at the
+     origin corner, the x-neighbour beside it, the y-neighbour below it, and
+     the diagonal neighbour opposite. */
+  #current-grid canvas {
+    width: 100%; height: 60px; display: block;
+    background: #fff; border: 1px solid #bbb; border-radius: 3px;
+    pointer-events: auto;
+  }
+  #current-play { width: 100%; margin-top: 6px; pointer-events: auto; }
+
   #readout {
     position: fixed; bottom: 12px; left: 12px; padding: 8px 10px; min-height: 1em;
     background: rgba(255, 255, 255, 0.92); border-radius: 6px; white-space: pre;
@@ -226,6 +254,17 @@
     <div><kbd>C</kbd> center on domain</div>
     <div><kbd>R</kbd> reset view</div>
   </div>
+</div>
+
+<div id="current-panel">
+  <b>induced current</b>
+  <div id="current-grid">
+    <canvas id="current-central" aria-label="central pixel"></canvas>
+    <canvas id="current-neighbor-x" aria-label="x-neighbour pixel"></canvas>
+    <canvas id="current-neighbor-y" aria-label="y-neighbour pixel"></canvas>
+    <canvas id="current-diagonal" aria-label="diagonal neighbour pixel"></canvas>
+  </div>
+  <button id="current-play">play</button>
 </div>
 
 <div id="readout"></div>
