@@ -13,6 +13,7 @@ from .grid import Grid
 import numpy as np
 
 from .io import find_drift, find_field
+from .current import write_current
 from .potential import load_potential, write_potential
 
 
@@ -74,6 +75,29 @@ def _add_export_potential_parser(subparsers) -> None:
         "--basename",
         default=None,
         help="output stem, overriding the per-field default",
+    )
+
+
+def _add_export_current_parser(subparsers) -> None:
+    p = subparsers.add_parser(
+        "export-current", help="write the induced-current block"
+    )
+    p.add_argument("--root", required=True, help="pochoir OUTPUT directory")
+    p.add_argument("--dest-dir", required=True, help="directory to write into")
+    p.add_argument(
+        "--basename",
+        default=None,
+        help="output stem (default: current)",
+    )
+    # Required with no fallback on purpose. The response file records no
+    # sampling rate, so a default would be a guess baked into every time axis
+    # the viewer draws, silently wrong rather than loudly missing.
+    p.add_argument(
+        "--time-step",
+        type=float,
+        required=True,
+        help="sampling interval in MICROSECONDS per tick, e.g. "
+        "'--time-step 0.1' for 0.1 us; required, there is no default",
     )
 
 
@@ -203,16 +227,40 @@ def _export(args) -> int:
     return 0
 
 
+def _export_current(args) -> int:
+    meta = write_current(
+        args.root,
+        args.dest_dir,
+        args.time_step,
+        basename=args.basename,
+    )
+
+    dest = Path(args.dest_dir)
+    stem = Path(meta["bin"]).stem
+    m, _, n_ticks = meta["shape"]
+    print(
+        f"wrote {dest / meta['bin']} and {dest / f'{stem}.json'} "
+        f"({meta['bytes'] / 1e6:.1f} MB, {m}x{m} paths x {n_ticks} ticks "
+        f"at {meta['time_step_us']} us)"
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="pochoir_viewer")
     subparsers = parser.add_subparsers(dest="command", required=True)
     _add_export_parser(subparsers)
     _add_export_potential_parser(subparsers)
+    _add_export_current_parser(subparsers)
 
     if argv is None:
         import sys
 
         argv = sys.argv[1:]
     args = parser.parse_args(argv)
-    handlers = {"export": _export, "export-potential": _export_potential}
+    handlers = {
+        "export": _export,
+        "export-potential": _export_potential,
+        "export-current": _export_current,
+    }
     return handlers[args.command](args)
