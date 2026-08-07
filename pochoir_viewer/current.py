@@ -6,10 +6,14 @@ waveform of ``T`` samples per response row. Unlike everything in
 than through :func:`~pochoir_viewer.io.load_npz`.
 """
 
+import json
 from math import isqrt
 from pathlib import Path
 
 import numpy as np
+
+from .io import find_response
+from .paths import load_paths, trim_stagnant
 
 
 def load_response(path: str | Path) -> np.ndarray:
@@ -107,3 +111,58 @@ def pixel_traces(block: np.ndarray, i: int, j: int) -> dict[str, np.ndarray]:
         "neighbor_y": block[i, j + k],
         "diagonal": block[i + k, j + k],
     }
+
+
+def write_current(
+    root: str | Path,
+    dest_dir: str | Path,
+    time_step_us: float,
+    basename: str | None = None,
+) -> dict:
+    """Write ``current.bin`` and ``current.json`` into `dest_dir`.
+
+    Shaped after :func:`~pochoir_viewer.potential.write_potential`: the bulk
+    goes to a raw float32 ``.bin`` and the JSON carries metadata only, with
+    ``bytes`` read back off the file actually on disk so the browser can
+    validate the length of its fetch. Returns the metadata that was written.
+
+    The block is ``(M, M, T)`` written C-order, so ``(i, j)`` is row-major with
+    the tick index varying fastest. ``M`` is not a parameter: the viewer draws
+    exactly the paths in ``paths/``, so ``n_paths`` comes from that array and
+    ``M = isqrt(n_paths)``, keeping the payload and the drawn paths in step by
+    construction.
+
+    ``starts`` carries one ``[x, y, z]`` per path in mm so the selector can
+    label positions. It is ordered to match the block read C-order — entry
+    ``i * M + j`` is the start for ``block[i, j]`` — which assumes the paths
+    array is itself flattened in that order, the same assumption the ``(N, N)``
+    reshape in :func:`domain_block` rests on.
+    """
+    dest_dir = Path(dest_dir)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    response = load_response(find_response(root))
+    paths, _ = load_paths(root)
+    n_paths = len(paths)
+    block = np.ascontiguousarray(domain_block(response, n_paths), dtype=np.float32)
+
+    stem = basename or "current"
+    binary = dest_dir / f"{stem}.bin"
+    binary.write_bytes(block.tobytes())
+
+    m, _, n_ticks = block.shape
+    starts = [
+        [float(v) for v in trim_stagnant(raw)[0]] for raw in paths[: m * m]
+    ]
+
+    meta = {
+        "bin": binary.name,
+        "shape": [int(n) for n in block.shape],
+        "n_ticks": int(n_ticks),
+        "time_step_us": float(time_step_us),
+        "time_units": "us",
+        "bytes": binary.stat().st_size,
+        "starts": starts,
+    }
+    (dest_dir / f"{stem}.json").write_text(json.dumps(meta))
+    return meta
