@@ -28,6 +28,7 @@ import {
 } from "./potential_view.js";
 import { fetchCurrent } from "./current_build.js";
 import { createCurrentView } from "./current_view.js";
+import { createDriftAnim } from "./drift_anim.js";
 
 const scene_data = await (await fetch("data/scene.json")).json();
 console.log(scene_data.meta);
@@ -376,6 +377,55 @@ let currentField = "drift";
 /** The induced-current view, or null while its payload is absent. */
 let currentView = null;
 
+/** The drifting-electron dots, or null for a domain without paths. */
+let driftAnim = null;
+
+/**
+ * ONE tick counter drives both the dots and the plot cursor.
+ *
+ * That is the whole point of the feature: two counters could drift apart and
+ * show an electron at a position its current trace disagrees with.
+ */
+let tick = 0;
+let playHandle = null;
+
+/**
+ * Ticks advanced per animation frame.
+ *
+ * One per frame at ~60 fps plays the full 3999-tick response in about a
+ * minute, which reads as a drift rather than a flicker. Raise it if that turns
+ * out to be too slow to watch.
+ */
+const TICKS_PER_FRAME = 1;
+
+/** Stop the loop and release the frame handle. Safe to call when not playing. */
+function pauseCurrent() {
+  if (playHandle !== null) {
+    cancelAnimationFrame(playHandle);
+    playHandle = null;
+  }
+  const play = document.getElementById("current-play");
+  if (play) {
+    play.setAttribute("aria-pressed", "false");
+    play.textContent = "play";
+  }
+}
+
+function stepCurrent() {
+  const nTicks = currentView?.nTicks ?? 0;
+  driftAnim?.setTick(tick);
+  currentView?.setCursor(tick);
+
+  // Stop at the end rather than wrapping: the response has a physical end, and
+  // looping back to t=0 would imply a periodicity the data does not have.
+  if (tick >= nTicks - 1) {
+    pauseCurrent();
+    return;
+  }
+  tick += TICKS_PER_FRAME;
+  playHandle = requestAnimationFrame(stepCurrent);
+}
+
 /**
  * Swap every field-dependent object.
  *
@@ -385,6 +435,17 @@ let currentView = null;
  * off-screen and a stale note would state the wrong size.
  */
 async function selectField(field) {
+  // A loop left running would keep calling setTick against objects this
+  // function is about to dispose.
+  pauseCurrent();
+  tick = 0;
+  if (driftAnim) {
+    sceneRoot.remove(driftAnim.points);
+    driftAnim.points.geometry.dispose();
+    driftAnim.points.material.dispose();
+    driftAnim = null;
+  }
+
   const sceneData = await loadScene(field);
 
   disposePotential();
@@ -415,6 +476,13 @@ async function selectField(field) {
     }
   }
 
+  if (!hasPaths) {
+    // Drop the view outright. Leaving it alive would keep the previous field's
+    // curves painted under a weighting scene they have nothing to do with.
+    currentView?.setSelection([]);
+    currentView = null;
+  }
+
   if (hasPaths) {
     // Same opt-in-absent handling as the potential payload: a missing
     // current.json is a normal state for a dataset that has not been exported
@@ -423,6 +491,11 @@ async function selectField(field) {
       const data = await fetchCurrent();
       currentView = createCurrentView(data);
       currentView.setSelection([{ i: 0, j: 0 }]);
+      currentView.nTicks = data.meta.shape[2];
+
+      driftAnim = createDriftAnim(sceneData.paths, data.meta.shape[2]);
+      sceneRoot.add(driftAnim.points);
+      driftAnim.setSelected([0]);
     } catch (error) {
       currentView = null;
       console.warn(
@@ -505,6 +578,20 @@ window.addEventListener("resize", () => {
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
   viewCube.onResize();
+});
+
+const playButton = document.getElementById("current-play");
+playButton?.addEventListener("click", () => {
+  if (playHandle !== null) {
+    pauseCurrent();
+    return;
+  }
+  // Restart from the beginning once the response has played out, so a second
+  // click replays rather than doing nothing at the final tick.
+  if (tick >= (currentView?.nTicks ?? 0) - 1) tick = 0;
+  playButton.setAttribute("aria-pressed", "true");
+  playButton.textContent = "pause";
+  playHandle = requestAnimationFrame(stepCurrent);
 });
 
 function animate() {

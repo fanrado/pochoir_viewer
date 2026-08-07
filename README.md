@@ -57,7 +57,7 @@ Each entry gives the exact invocation against the reference dataset, the files
 it writes, and what invalidates it.
 
 The filenames matter: the viewer fetches them by fixed name
-(`web/viewer.js:289-292`), so a wrong `--dest`, `--dest-dir` or `--basename`
+(`web/viewer.js:292-296`), so a wrong `--dest`, `--dest-dir` or `--basename`
 produces a file the page will never load. If a layer renders disabled or empty,
 check the name on disk against the table below first.
 
