@@ -17,7 +17,7 @@ import {
   createCurrentView,
   pathColor,
 } from "../../web/current_view.js";
-import { PIXEL_OFFSET } from "../../web/current_build.js";
+import { PIXEL_OFFSET, tracesForPath } from "../../web/current_build.js";
 
 const M = 10;
 const T = 4;
@@ -142,15 +142,18 @@ test("missing canvases do not break the view", () => {
   assert.doesNotThrow(() => view.setSelection([{ i: 0, j: 0 }]));
 });
 
-test("there is one panel per trace key and the ids match the markup", () => {
-  assert.deepEqual(
-    PANELS.map((p) => p.key),
-    ["central", "neighbor_x", "neighbor_y", "diagonal"],
-  );
+test("the panels are addressed positionally, not by pad role", () => {
+  // 8fa1ddb drops key and title from PANELS: panel n takes entry n of
+  // tracesForPath's fixed order. Reintroducing a role name here is the
+  // mislabelling of pochoir_viewer-154c coming back.
   assert.deepEqual(
     PANELS.map((p) => p.id),
     ["current-central", "current-neighbor-x", "current-neighbor-y", "current-diagonal"],
   );
+  for (const panel of PANELS) {
+    assert.equal("key" in panel, false, `${panel.id} still carries a role key`);
+    assert.equal("title" in panel, false, `${panel.id} still carries a fixed title`);
+  }
 });
 
 // --- the shared vertical scale ----------------------------------------------
@@ -311,15 +314,46 @@ test("every panel draws a zero line at mid-height", () => {
   }
 });
 
-test("each panel is titled with the pixel it shows", () => {
+const titleOf = (doc, id) =>
+  ops(doc, id).filter(([op]) => op === "fillText").map(([, t]) => t)[0];
+
+test("each panel is titled with the block index it draws", () => {
+  // The four partners of (2, 3) are (2,3), (7,3), (2,8), (7,8) in order.
   const doc = fakeDoc();
 
-  createCurrentView(payload(), doc).setSelection([]);
+  createCurrentView(payload(), doc).setSelection([{ i: 2, j: 3 }]);
 
-  for (const panel of PANELS) {
-    const titles = ops(doc, panel.id).filter(([op]) => op === "fillText").map(([, t]) => t);
-    assert.ok(titles.includes(panel.title), `${panel.id} is not labelled ${panel.title}`);
+  assert.deepEqual(
+    PANELS.map((p) => titleOf(doc, p.id)),
+    ["[2, 3] (start)", "[7, 3]", "[2, 8]", "[7, 8]"],
+  );
+});
+
+test("the start's own panel is marked without claiming it collects", () => {
+  // "(start)" says which cell the electron is in; it must NOT say "central",
+  // which would assert which pad picks up the charge -- the claim that was
+  // wrong for three quarters of the domain.
+  const doc = fakeDoc();
+
+  createCurrentView(payload(), doc).setSelection([{ i: 7, j: 3 }]);
+
+  const titles = PANELS.map((p) => titleOf(doc, p.id));
+  assert.equal(titles[0], "[7, 3] (start)");
+  assert.equal(titles.filter((t) => t?.includes("(start)")).length, 1);
+  for (const t of titles) {
+    assert.equal(/central|neighbour|neighbor|diagonal/.test(t ?? ""), false, t);
   }
+});
+
+test("the title follows the quarter the start is in", () => {
+  // Same panel, different quarter, different cell -- the titles have to move.
+  const first = fakeDoc();
+  const third = fakeDoc();
+  createCurrentView(payload(), first).setSelection([{ i: 2, j: 3 }]);
+  createCurrentView(payload(), third).setSelection([{ i: 7, j: 8 }]);
+
+  assert.equal(titleOf(first, "current-central"), "[2, 3] (start)");
+  assert.equal(titleOf(third, "current-central"), "[7, 8] (start)");
 });
 
 test("the time axis is labelled in physical units from the payload", () => {
@@ -479,10 +513,86 @@ test("the selection is copied so a caller's later mutation does not leak in", ()
   assert.equal(drawn.size, 1, "a post-hoc push to the caller's array was drawn");
 });
 
-test("a selection outside the central quarter surfaces the range error", () => {
-  // Better a thrown error than four panels quietly drawing the wrong pixels.
+test("a start anywhere in the block can now be selected", () => {
+  // 94799a9 and fc45c69 opened every quarter; only off-block indices throw.
   const doc = fakeDoc();
   const view = createCurrentView(payload(), doc);
 
-  assert.throws(() => view.setSelection([{ i: 7, j: 0 }]), /central quarter/);
+  for (const [i, j] of [[7, 0], [0, 7], [9, 9], [5, 5]]) {
+    assert.doesNotThrow(() => view.setSelection([{ i, j }]), `(${i}, ${j})`);
+  }
+  assert.throws(() => view.setSelection([{ i: 10, j: 0 }]), /outside the/);
+});
+
+// --- one panel, two quarters --------------------------------------------------
+//
+// Panel n draws entry n for EVERY selected path, and entry n is a different
+// block cell depending on which quarter the start is in. So selecting two
+// starts from different quarters of the same group overlays two different
+// cells in one panel, under a title naming only the first. drawPanel's comment
+// acknowledges the title limitation; these pin what actually happens, because
+// the consequence is stronger than a title being approximate -- the two curves
+// are different physical quantities on one axis.
+
+test("panel 0 draws a different cell for each quarter's start", () => {
+  // (2,3) and (7,3) are partners: entry 0 is (2,3) for the first and (7,3)
+  // for the second. Both land in panel 0.
+  const data = payload();
+
+  const a = tracesForPath(data, 2, 3)[0].index.join(",");
+  const b = tracesForPath(data, 7, 3)[0].index.join(",");
+
+  assert.notEqual(a, b, "the two starts share entry 0, so there is nothing to overlay");
+  assert.equal(a, "2,3");
+  assert.equal(b, "7,3");
+});
+
+test("selecting both puts two different cells in the same panel", () => {
+  const doc = fakeDoc();
+  const view = createCurrentView(payload(), doc);
+
+  view.setSelection([{ i: 2, j: 3 }, { i: 7, j: 3 }]);
+
+  // Cell values are the a*100+b labels, so the two curves are identifiable.
+  const drawn = new Set(
+    curves(doc, "current-central")
+      .filter(([op]) => op === "moveTo")
+      .map(([, , y]) => y),
+  );
+  assert.equal(drawn.size, 2, "the two starts drew the same cell");
+});
+
+test("the title names only the first selected start", () => {
+  // Acknowledged in drawPanel's comment. Pinned so it is a known limitation
+  // rather than a surprise: the legend's per-path colours are what
+  // disambiguate the second curve.
+  const doc = fakeDoc();
+
+  createCurrentView(payload(), doc).setSelection([{ i: 2, j: 3 }, { i: 7, j: 3 }]);
+
+  assert.equal(titleOf(doc, "current-central"), "[2, 3] (start)");
+});
+
+test("the legend still keys every selected start to its colour", () => {
+  // The only thing that lets a reader attribute the second curve.
+  const doc = fakeDoc();
+
+  createCurrentView(payload(), doc).setSelection([{ i: 2, j: 3 }, { i: 7, j: 3 }]);
+
+  assert.equal(doc.els["current-legend"].children.length, 2);
+});
+
+test("two starts in the same quarter share their panel cells", () => {
+  // The benign case, for contrast: both entry-0 cells are in the first
+  // quarter, so panel 0 compares like with like.
+  const data = payload();
+
+  assert.equal(tracesForPath(data, 1, 1)[0].index.join(","), "1,1");
+  assert.equal(tracesForPath(data, 2, 2)[0].index.join(","), "2,2");
+  for (const slot of [0, 1, 2, 3]) {
+    const a = tracesForPath(data, 1, 1)[slot].index;
+    const b = tracesForPath(data, 2, 2)[slot].index;
+    assert.equal(a[0] < 5 === b[0] < 5, true, `slot ${slot} straddles the boundary`);
+    assert.equal(a[1] < 5 === b[1] < 5, true, `slot ${slot} straddles the boundary`);
+  }
 });
