@@ -69,47 +69,59 @@ def domain_block(response: np.ndarray, n_paths: int) -> np.ndarray:
     return response.reshape(n, n, -1)[:m, :m, :]
 
 
-#: Half-width of the 10-wide drift domain: the reciprocity offset between the
-#: central pixel's quarter and each neighbouring pixel's quarter.
+#: Half-width of the reference 10-wide drift domain.
+#:
+#: Retained as the documented value for that domain; :func:`pixel_traces`
+#: derives the half-width from the block it is given rather than reading this,
+#: so a differently sized block works without touching it.
 PIXEL_OFFSET = 5
+
+
+def partner_index(k: int, half: int) -> int:
+    """The index of ``k``'s partner in the other quarter along one axis.
+
+    The partner MIRRORS about the quarter boundary rather than always adding
+    ``half``: below the boundary it is ``k + half``, at or above it is
+    ``k - half``. Always adding would run off the end of the block for any
+    ``k >= half``, which is why three quarters of the domain used to raise.
+    """
+    return k + half if k < half else k - half
 
 
 def pixel_traces(block: np.ndarray, i: int, j: int) -> dict[str, np.ndarray]:
     """Return the four induced-current traces for the path starting at ``(i, j)``.
 
     A response row is indexed by the electron's STARTING position, not by the
-    pixel it lands on. By reciprocity the quarter of the domain a start
-    position falls in identifies which pixel picks up the current, so the four
-    pixels a single path induces on are read from four different rows of the
-    same block. The 10-wide domain splits 5 + 5, so for a start in the central
-    quarter ``[:5, :5]``:
+    pixel it lands on. By reciprocity the quarter of the domain a start falls
+    in identifies which pixel picks up the current, so the four pixels a single
+    path induces on are read from four different rows of the same block.
 
-    ``central``     ``block[i, j]``
-    ``neighbor_x``  ``block[i + 5, j]``
-    ``neighbor_y``  ``block[i, j + 5]``
-    ``diagonal``    ``block[i + 5, j + 5]``
+    THE KEYS ARE RELATIVE TO THE ELECTRON'S OWN QUARTER, not to a fixed pixel
+    in the domain. ``central`` is the pixel whose quarter contains this start,
+    whichever quarter that is; ``neighbor_x`` is its partner across the
+    boundary along the first axis, and so on. For a start outside the first
+    quarter the name would otherwise be misleading.
 
-    ``(i, j)`` must lie in the central quarter: outside it the offsets name a
-    different pair of pixels entirely and would read past the block.
+    The partner index mirrors about the quarter boundary (see
+    :func:`partner_index`), so with ``half = M // 2 = 5`` a start at ``(7, 2)``
+    reads ``(7, 2)``, ``(2, 2)``, ``(7, 7)`` and ``(2, 7)``. Every ``(i, j)``
+    inside the block is valid; only indices outside the block are rejected.
 
-    ASSUMPTION: the ``+5`` reciprocity offsets come from the human's
-    description of the ``fr`` layout, not from anything recorded in the file
-    itself. If the plotted traces look wrong, raise it rather than adjusting
-    these offsets.
+    ``half`` is derived from the block, never hardcoded.
     """
-    if not (0 <= i < PIXEL_OFFSET and 0 <= j < PIXEL_OFFSET):
+    rows, cols = block.shape[0], block.shape[1]
+    if not (0 <= i < rows and 0 <= j < cols):
         raise ValueError(
-            f"start position ({i}, {j}) is outside the central quarter "
-            f"[:{PIXEL_OFFSET}, :{PIXEL_OFFSET}]; the reciprocity offsets are "
-            "meaningless there"
+            f"start position ({i}, {j}) is outside the {rows}x{cols} block"
         )
 
-    k = PIXEL_OFFSET
+    px = partner_index(i, rows // 2)
+    py = partner_index(j, cols // 2)
     return {
         "central": block[i, j],
-        "neighbor_x": block[i + k, j],
-        "neighbor_y": block[i, j + k],
-        "diagonal": block[i + k, j + k],
+        "neighbor_x": block[px, j],
+        "neighbor_y": block[i, py],
+        "diagonal": block[px, py],
     }
 
 
