@@ -417,26 +417,19 @@ number is undefined. The viewer refuses rather than painting nonsense.
 
 ### Levels and decades
 
-The **levels** slider runs 100 to 5000. It recomputes on **release, not during
-the drag** — deliberately, because the cost is real:
-
-| levels | segments | time |
-| --- | --- | --- |
-| 200 | ~71,000 | ~0.08 s |
-| 1000 | ~356,000 | ~0.36 s |
-| 5000 | ~1,780,000 | ~1.6 s |
-
-A status line reports the segment count and elapsed time after each rebuild, so
-a slow setting explains itself. Per-level checkboxes appear up to 24 levels;
-past that the panel just states the count, since 5000 checkboxes would be
-useless.
+The level count is fixed at `CONTOUR_LEVEL_COUNT = 200` and is not adjustable
+from the panel. A status line still reports the segment count and elapsed time
+after each rebuild, so a slow setting explains itself.
 
 The **decades** slider sets how far below the maximum the colour ramp reaches:
 at 8 decades the floor is `1e-8 x max`, and anything at or below it takes the
 ramp's first colour. Exact zeros land there too.
 
 **A caveat on the deep tail.** Below roughly **1e-12** these values are
-numerical residue from the relaxation solver, not physics. The 8-decade default
-covers everything physically meaningful. Pushing the slider to 20 decades will
-show solver noise — the control reaches that far because seeing the whole field
-was the explicit ask, not because 20 decades is a sensible analysis setting.
+numerical residue from the relaxation solver, not physics. Unsigned fields
+therefore open at `PHYSICS_FLOOR_DECADES = 12`, which puts the default squarely
+*at* that physics floor rather than short of it; the signed drift potential
+keeps the 8-decade default. Pushing the slider to its maximum of 40 decades
+will show solver noise — the control reaches that far because seeing the
+field's full extent was the explicit ask, not because 40 decades is a sensible
+analysis setting.
