@@ -601,7 +601,14 @@ function pathCells() {
   return [...document.querySelectorAll(".path-cell")];
 }
 
-/** Push the current selection to both consumers. */
+/**
+ * Push the current selection to both consumers.
+ *
+ * Returns true on success. A throw out of setSelection is caught and reported
+ * rather than propagating: it reaches this code from a click handler, where an
+ * escaping error would abort the handler mid-way and leave the button state
+ * describing a selection that was never drawn.
+ */
 function applyPathSelection() {
   const meta = currentView?.meta;
   const m = meta?.shape?.[0] ?? 10;
@@ -611,7 +618,16 @@ function applyPathSelection() {
     return { i, j };
   });
 
-  currentView?.setSelection(picks);
+  try {
+    currentView?.setSelection(picks);
+  } catch (error) {
+    // Deliberately NOT the 'run export-current' message: the payload loaded
+    // fine, and blaming the export is what disguised pochoir_viewer-x1i0 as a
+    // missing file.
+    console.warn(`path selection ${JSON.stringify(picks)} could not be drawn`, error);
+    return false;
+  }
+
   driftAnim?.setSelected(picks.map(({ i, j }) => pathIdFor(i, j, m)));
 
   // Back to the start on any change: a newly selected electron would otherwise
@@ -620,6 +636,7 @@ function applyPathSelection() {
   tick = 0;
   driftAnim?.setTick(0);
   currentView?.setCursor(0);
+  return true;
 }
 
 /**
@@ -645,18 +662,34 @@ function wirePathSelector(meta) {
     cell.setAttribute("aria-pressed", String(selectedPaths.has(`${i},${j}`)));
 
     cell.addEventListener("click", () => {
+      // Apply FIRST, then reflect the result in the button. Flipping
+      // aria-pressed up front leaves the cell looking selected even when the
+      // selection could not be drawn.
       const key = `${i},${j}`;
-      if (selectedPaths.has(key)) selectedPaths.delete(key);
+      const wasSelected = selectedPaths.has(key);
+      if (wasSelected) selectedPaths.delete(key);
       else selectedPaths.add(key);
-      cell.setAttribute("aria-pressed", String(selectedPaths.has(key)));
-      applyPathSelection();
+
+      if (applyPathSelection()) {
+        cell.setAttribute("aria-pressed", String(!wasSelected));
+      } else {
+        // Roll the model back so the set and the button agree again.
+        if (wasSelected) selectedPaths.add(key);
+        else selectedPaths.delete(key);
+        cell.setAttribute("aria-pressed", String(wasSelected));
+      }
     });
   }
 
   document.getElementById("path-clear")?.addEventListener("click", () => {
+    const previous = new Set(selectedPaths);
     selectedPaths.clear();
-    for (const cell of pathCells()) cell.setAttribute("aria-pressed", "false");
-    applyPathSelection();
+    if (applyPathSelection()) {
+      for (const cell of pathCells()) cell.setAttribute("aria-pressed", "false");
+    } else {
+      selectedPaths.clear();
+      for (const key of previous) selectedPaths.add(key);
+    }
   });
 }
 
