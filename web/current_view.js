@@ -7,9 +7,11 @@
  */
 
 import {
+  clampViewport,
+  fullViewport,
   peakMagnitude,
   tickToUs,
-  tickToX,
+  tickToXIn,
   traceAt,
   valueToY,
 } from "./current_build.js";
@@ -95,6 +97,14 @@ export function createCurrentView(data, doc = globalThis.document) {
   let selection = [];
   let cursor = null;
 
+  /**
+   * One time window PER PANEL, indexed by slot.
+   *
+   * Deliberately not shared: zooming one panel must leave the other three
+   * where they were, so each slot keeps its own {tickLo, tickHi}.
+   */
+  const viewports = PANELS.map(() => fullViewport(data.meta.shape[2]));
+
   function drawPanel({ canvas, slot }) {
     if (!canvas) return;
     const ctx = canvas.getContext?.("2d");
@@ -117,6 +127,7 @@ export function createCurrentView(data, doc = globalThis.document) {
 
     const { i, j } = pick;
     const trace = traceAt(data, i, j);
+    const view = viewports[slot];
 
     // Each panel autoscales to ITS OWN trace. The slots hold unrelated paths
     // now, so a shared scale would flatten whichever is smaller for no reason;
@@ -136,16 +147,26 @@ export function createCurrentView(data, doc = globalThis.document) {
     ctx.strokeStyle = pathColor(slot);
     ctx.lineWidth = 1;
     ctx.beginPath();
-    for (let tick = 0; tick < trace.length; tick++) {
-      const x = tickToX(tick, trace.length, width);
+    // Only the ticks inside this panel's window are drawn, one pixel column at
+    // a time through tickToXIn. The endpoints are rounded outward so a partly
+    // visible segment still enters and leaves at the panel edge rather than
+    // stopping short of it.
+    const first = Math.max(Math.floor(view.tickLo), 0);
+    const last = Math.min(Math.ceil(view.tickHi), trace.length - 1);
+    for (let tick = first; tick <= last; tick++) {
+      const x = tickToXIn(tick, view, width);
       const y = valueToY(trace[tick], peak, height);
-      if (tick === 0) ctx.moveTo(x, y);
+      if (tick === first) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     }
     ctx.stroke();
 
-    if (cursor !== null) {
-      const x = tickToX(cursor, data.meta.shape[2], width);
+    // The cursor ties the panels to the animation, so it must never lie about
+    // where the electron is. A tick outside this window is NOT drawn at the
+    // edge: clamping would park it at 0 or full width and show the electron at
+    // a time it is not at.
+    if (cursor !== null && cursor >= view.tickLo && cursor <= view.tickHi) {
+      const x = tickToXIn(cursor, view, width);
       ctx.strokeStyle = "#a05000";
       ctx.beginPath();
       ctx.moveTo(x, 0);
@@ -157,9 +178,17 @@ export function createCurrentView(data, doc = globalThis.document) {
     ctx.font = "10px system-ui, sans-serif";
     ctx.fillText(`(${i}, ${j}) peak ${peak.toExponential(2)}`, 3, 10);
 
-    // Time axis in physical units from the payload, never raw ticks.
-    const span = tickToUs(data.meta.shape[2] - 1, data.meta);
-    ctx.fillText(`0–${span.toFixed(1)} ${timeUnits(data.meta)}`, 3, height - 3);
+    // Time axis in physical units from the payload, never raw ticks, and
+    // recomputed from THIS panel's window so a zoomed panel reads the span it
+    // actually shows.
+    // One decimal on BOTH ends, so a zoomed panel reads "88.5–92.0 us" and the
+    // two numbers line up rather than one carrying a decimal the other lacks.
+    const us = (tick) => tickToUs(tick, data.meta).toFixed(1);
+    ctx.fillText(
+      `${us(view.tickLo)}–${us(view.tickHi)} ${timeUnits(data.meta)}`,
+      3,
+      height - 3,
+    );
   }
 
   function drawLegend() {
@@ -194,6 +223,24 @@ export function createCurrentView(data, doc = globalThis.document) {
       selection = [...next].slice(0, SLOT_COUNT);
       draw();
     },
+    /** This panel's time window, for the zoom controls. */
+    viewportOf(slot) {
+      return { ...viewports[slot] };
+    },
+
+    /**
+     * Replace one panel's window. Per panel by design: zooming one must leave
+     * the other three exactly where they were.
+     */
+    setViewport(slot, viewport) {
+      viewports[slot] = clampViewport(
+        viewport.tickLo,
+        viewport.tickHi,
+        data.meta.shape[2],
+      );
+      draw();
+    },
+
     /** Move the shared time cursor across all four panels. */
     setCursor(tick) {
       cursor = tick;

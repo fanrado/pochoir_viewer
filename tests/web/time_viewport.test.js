@@ -29,15 +29,24 @@ const T = 3999;
 const LAST = T - 1;
 const span = ({ tickLo, tickHi }) => tickHi - tickLo;
 
-/** Every viewport must satisfy these, whatever produced it. */
+/**
+ * Every viewport must satisfy these, whatever produced it.
+ *
+ * The window never reaches past the DATA: `nTicks - 1` is the last real tick,
+ * and the MIN_VIEWPORT_TICKS floor exists to stop zoom collapsing a window,
+ * not to license inventing samples that do not exist. A payload shorter than
+ * the floor therefore opens on all of itself and no more, so the floor is
+ * `min(MIN_VIEWPORT_TICKS, last)` rather than a constant.
+ */
 function assertLegal(v, nTicks, what) {
-  const last = Math.max(nTicks - 1, MIN_VIEWPORT_TICKS);
+  const last = Math.max(nTicks - 1, 0);
+  const minSpan = Math.min(MIN_VIEWPORT_TICKS, last);
   assert.ok(Number.isFinite(v.tickLo) && Number.isFinite(v.tickHi), `${what}: not finite`);
-  assert.ok(v.tickLo < v.tickHi, `${what}: lo ${v.tickLo} is not below hi ${v.tickHi}`);
+  assert.ok(v.tickLo <= v.tickHi, `${what}: lo ${v.tickLo} is above hi ${v.tickHi}`);
   assert.ok(v.tickLo >= 0, `${what}: lo ${v.tickLo} is negative`);
   assert.ok(v.tickHi <= last, `${what}: hi ${v.tickHi} passes ${last}`);
   assert.ok(
-    v.tickHi - v.tickLo >= MIN_VIEWPORT_TICKS - 1e-9,
+    v.tickHi - v.tickLo >= minSpan - 1e-9,
     `${what}: span ${v.tickHi - v.tickLo} is below the floor`,
   );
 }
@@ -53,21 +62,28 @@ test("reset returns the whole axis again", () => {
 });
 
 test("a tiny payload still opens on a legal window", () => {
-  // The floor applies even when the data is shorter than it: better a window
-  // reaching past the data than a zero-span one that divides by zero.
   for (const n of [1, 2, 3, 4, 5]) {
     assertLegal(fullViewport(n), n, `nTicks ${n}`);
   }
 });
 
-test("a payload shorter than the floor opens wider than its own data", () => {
-  // Pinned as today's behaviour rather than filed: with 3 ticks the window is
-  // 0..4, so the panel shows empty space past the last sample. Unreachable
-  // with any real export, where T is in the thousands.
-  const v = fullViewport(3);
+test("a payload shorter than the floor opens on exactly its own data", () => {
+  // Was the reverse: the floor was applied to the full span too, so 3 ticks
+  // opened on 0..4 and the axis was labelled past the last sample. Applying a
+  // zoom floor to the opening span invents time that was never measured.
+  for (const n of [1, 2, 3, 4]) {
+    assert.deepEqual(fullViewport(n), { tickLo: 0, tickHi: n - 1 }, `nTicks ${n}`);
+  }
+});
 
-  assert.equal(v.tickHi, MIN_VIEWPORT_TICKS);
-  assert.ok(v.tickHi > 3 - 1, "the window no longer overshoots a tiny payload");
+test("a degenerate single-tick payload does not divide by zero", () => {
+  // It cannot honour lo < hi -- there is one sample -- so the drawing helpers
+  // must absorb a zero span rather than the viewport faking one.
+  const v = fullViewport(1);
+
+  assert.deepEqual(v, { tickLo: 0, tickHi: 0 });
+  assert.equal(tickToXIn(0, v, 400), 0);
+  assert.ok(Number.isFinite(xToTickIn(200, v, 400)));
 });
 
 // --- clampViewport as the single authority ------------------------------------

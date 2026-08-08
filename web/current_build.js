@@ -114,7 +114,10 @@ export const MIN_VIEWPORT_TICKS = 4;
  * TIME ONLY — amplitude stays autoscaled per panel to its own peak.
  */
 export function fullViewport(nTicks) {
-  return { tickLo: 0, tickHi: Math.max(nTicks - 1, MIN_VIEWPORT_TICKS) };
+  // The last real tick, never MIN_VIEWPORT_TICKS: the floor exists to stop
+  // ZOOM collapsing a window, and applying it here would invent ticks past the
+  // end of a short payload and label an axis that runs off the data.
+  return { tickLo: 0, tickHi: Math.max(nTicks - 1, 0) };
 }
 
 /** The full span again, for the reset control. */
@@ -132,17 +135,20 @@ export function resetViewport(nTicks) {
  * MIN_VIEWPORT_TICKS.
  */
 export function clampViewport(tickLo, tickHi, nTicks) {
-  const last = Math.max(nTicks - 1, MIN_VIEWPORT_TICKS);
+  const last = Math.max(nTicks - 1, 0);
+  // A payload shorter than the floor cannot honour it; all of it is the
+  // smallest window there is.
+  const minSpan = Math.min(MIN_VIEWPORT_TICKS, last);
 
   // A drag from right to left is the same window as left to right.
   let lo = Math.min(tickLo, tickHi);
   let hi = Math.max(tickLo, tickHi);
 
-  if (hi - lo < MIN_VIEWPORT_TICKS) {
+  if (hi - lo < minSpan) {
     // Grow about the centre so a too-small window does not jump to one end.
     const mid = (lo + hi) / 2;
-    lo = mid - MIN_VIEWPORT_TICKS / 2;
-    hi = mid + MIN_VIEWPORT_TICKS / 2;
+    lo = mid - minSpan / 2;
+    hi = mid + minSpan / 2;
   }
 
   // Slide, rather than squash, a window that overhangs an end: the span the

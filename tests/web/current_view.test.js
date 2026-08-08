@@ -407,7 +407,9 @@ test("the time axis is labelled in physical units from the payload", () => {
 
   createCurrentView(payload(), doc).setSelection([{ i: 0, j: 0 }]);
 
-  assert.ok(texts(doc, SLOTS[0]).includes("0–0.3 us"), texts(doc, SLOTS[0]).join(" | "));
+  // Both ends carry one decimal since the label became a WINDOW: a zoomed
+  // panel reads "88.5–92.0 us", and the full span reads "0.0–0.3 us".
+  assert.ok(texts(doc, SLOTS[0]).includes("0.0–0.3 us"), texts(doc, SLOTS[0]).join(" | "));
 });
 
 test("the axis label follows the payload's own time step", () => {
@@ -417,7 +419,7 @@ test("the axis label follows the payload's own time step", () => {
 
   createCurrentView(data, doc).setSelection([{ i: 0, j: 0 }]);
 
-  assert.ok(texts(doc, SLOTS[0]).includes("0–3.0 us"));
+  assert.ok(texts(doc, SLOTS[0]).includes("0.0–3.0 us"), texts(doc, SLOTS[0]).join(" | "));
 });
 
 test("the unit comes from the payload rather than being hardcoded", () => {
