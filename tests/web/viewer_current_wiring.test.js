@@ -445,3 +445,107 @@ test("the reason it must stay put is recorded next to it", () => {
 
   assert.match(preceding, /temporal dead zone|TDZ/i);
 });
+
+// --- a missing payload is not a wiring bug (fcf67c0) -------------------------
+//
+// One catch used to cover both the fetch and the wiring, so a ReferenceError
+// in the wiring came out as "run: python -m pochoir_viewer export-current".
+// That misdirection disguised two real defects -- pochoir_viewer-x1i0 and
+// pochoir_viewer-iu0z -- and in both cases the payload had loaded fine. The
+// two failure modes have different causes, different audiences and different
+// fixes, so they are reported separately now.
+
+/** The body of the `if (hasPaths)` branch in selectField.
+ *
+ * Uses the brace-matching functionBody, NOT selectField(): that helper stops
+ * at the next top-level declaration, which over-captured into
+ * applyPathSelection and made lastIndexOf("} catch") find the wrong catch.
+ */
+function hasPathsBranch() {
+  const body = functionBody("selectField");
+  const start = body.indexOf("if (hasPaths) {");
+  assert.ok(start > 0, "the hasPaths branch is gone");
+
+  // Brace-matched: slicing to the end of selectField ran on into the
+  // potential-payload try/catch that follows, whose catch DOES name an
+  // exporter -- so the wiring assertions were reading the wrong block.
+  const rest = body.slice(start);
+  let depth = 0;
+  for (let i = rest.indexOf("{"); i < rest.length; i++) {
+    if (rest[i] === "{") depth++;
+    else if (rest[i] === "}" && --depth === 0) return rest.slice(0, i + 1);
+  }
+  assert.fail("the hasPaths branch is unbalanced");
+}
+
+test("only the fetch is treated as an absent payload", () => {
+  // The narrow try is the whole point: everything after it is code, not data.
+  const branch = hasPathsBranch();
+  const firstTry = branch.slice(branch.indexOf("try {"), branch.indexOf("} catch"));
+
+  assert.match(firstTry, /await fetchCurrent\(\)/);
+  assert.equal(/createCurrentView|createDriftAnim|wirePathSelector/.test(firstTry), false,
+    "the wiring is still inside the payload try");
+});
+
+test("a missing payload still points at the exporter", () => {
+  const branch = hasPathsBranch();
+  const payloadCatch = branch.slice(branch.indexOf("} catch"), branch.indexOf("if (data)"));
+
+  assert.match(payloadCatch, /export-current/);
+  assert.match(payloadCatch, /payload unavailable/);
+});
+
+test("a wiring failure is reported as a bug, not a missing export", () => {
+  // The correction: the payload loaded, so sending the user to the exporter
+  // is telling them to fix something that is not broken.
+  const branch = hasPathsBranch();
+  const wiringCatch = branch.slice(branch.lastIndexOf("} catch"));
+  const code = wiringCatch.replace(/\/\/[^\n]*/g, "");
+
+  assert.match(code, /bug in the viewer, not a missing export/);
+  assert.equal(/export-current/.test(code), false, "the wiring failure still names the exporter");
+});
+
+test("a wiring failure is logged at error level, a missing payload at warn", () => {
+  // A missing optional payload is a normal state; a wiring failure is not.
+  const branch = hasPathsBranch();
+
+  assert.match(branch.slice(0, branch.indexOf("if (data)")), /console\.warn/);
+  assert.match(branch.slice(branch.indexOf("if (data)")), /console\.error/);
+});
+
+test("the two failures disable the button with different explanations", () => {
+  const branch = hasPathsBranch();
+
+  assert.match(branch, /disable\("current-play", "run: python -m pochoir_viewer export-current"\)/);
+  assert.match(branch, /disable\("current-play", "panel wiring failed[^"]*"\)/);
+});
+
+test("the wiring is still caught, so one panel cannot take the scene down", () => {
+  // Narrowing the catch must not become removing it: selectField goes on to
+  // build the potential and the rest of the scene.
+  const branch = hasPathsBranch();
+  const wiring = branch.slice(branch.indexOf("if (data)"));
+
+  assert.match(wiring, /try \{/);
+  assert.match(wiring, /createCurrentView\(data\)/);
+  assert.match(wiring, /wirePathSelector\(data\.meta\)/);
+});
+
+test("both paths leave currentView null rather than half-built", () => {
+  // A partly-wired view would be drawn against by the tick loop.
+  const branch = hasPathsBranch();
+  const catches = [...branch.matchAll(/\} catch[\s\S]{0,200}?currentView = null/g)];
+
+  assert.equal(catches.length, 2, "one of the two catches leaves currentView set");
+});
+
+test("the wiring runs only when the payload actually arrived", () => {
+  // `data` starts null and the wiring is gated on it; without that gate a
+  // failed fetch would fall straight into createCurrentView(null).
+  const branch = hasPathsBranch();
+
+  assert.match(branch, /let data = null/);
+  assert.match(branch, /if \(data\) \{/);
+});
