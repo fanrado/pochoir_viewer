@@ -238,3 +238,68 @@ test("the layout comment describes selection slots, not pad neighbours", () => {
   assert.match(css, /SELECTION SLOTS/);
   assert.equal(/the x-neighbour beside it/.test(css), false);
 });
+
+// --- the zoom affordance (2931b66) --------------------------------------------
+//
+// Zoom is discoverable only if something says it exists: a zoomed panel and a
+// full-span one differ solely in their axis labels, so without the help text
+// the feature is invisible and a zoomed panel reads as broken.
+
+/** The #current-zoom-help text, whitespace-normalised. */
+function helpText() {
+  const at = html.indexOf('id="current-zoom-help"');
+  assert.ok(at > 0, "no #current-zoom-help");
+  const rest = html.slice(at);
+  return rest.slice(0, rest.indexOf("</div>")).replace(/\s+/g, " ");
+}
+
+test("the zoom controls are in the page", () => {
+  for (const id of ["current-zoom-help", "current-reset-zoom"]) {
+    assert.ok(html.includes(`id="${id}"`), `no #${id}`);
+  }
+});
+
+test("the help text names every gesture the code implements", () => {
+  const body = helpText();
+
+  assert.match(body, /drag/i);
+  assert.match(body, /wheel/i);
+  assert.match(body, /double-click/i);
+});
+
+test("the help says the panels zoom independently", () => {
+  // The single most confusing thing about four independent windows.
+  const body = helpText();
+
+  assert.match(body, /zooms on its own|independently/i);
+});
+
+test("the help points at the axis label as the zoom indicator", () => {
+  // It is the only thing that says a panel is zoomed.
+  const body = helpText();
+
+  assert.match(body, /range under each one is the window/i);
+});
+
+test("the reset button says it covers all panels", () => {
+  // A button labelled just 'reset zoom' beside four independent panels would
+  // read as resetting one.
+  const button = html.match(/<button id="current-reset-zoom">([^<]*)<\/button>/);
+
+  assert.ok(button, "no reset button");
+  assert.match(button[1], /all panels/i);
+});
+
+test("the reset button escapes the panel's pointer-events none", () => {
+  assert.match(rule("#current-reset-zoom"), /pointer-events: auto/);
+});
+
+test("the zoom controls sit inside the current panel", () => {
+  const panelStart = html.indexOf('<div id="current-panel">');
+  const readout = html.indexOf('<div id="readout">');
+
+  for (const id of ["current-zoom-help", "current-reset-zoom"]) {
+    const at = html.indexOf(`id="${id}"`);
+    assert.ok(at > panelStart && at < readout, `${id} is outside the panel`);
+  }
+});

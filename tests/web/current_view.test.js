@@ -1126,3 +1126,62 @@ test("a zoom redraws only through the shared draw, so every panel stays consiste
   assert.ok(ops(doc, SLOTS[1]).length > 0, "the untouched panel was not repainted");
   assert.deepEqual(view.viewportOf(1), { tickLo: 0, tickHi: 99 });
 });
+
+// --- reset all panels, and the affordance (2931b66) ---------------------------
+
+function withResetButton() {
+  const button = { handlers: {}, addEventListener(t, fn) { (this.handlers[t] ??= []).push(fn); },
+    fire(t) { const seen = { stopped: false };
+      for (const fn of this.handlers[t] ?? []) fn({ stopPropagation: () => { seen.stopped = true; } });
+      return seen; } };
+  const doc = fakeDoc({ "current-reset-zoom": button });
+  const view = createCurrentView(payload({ m: M, t: 100 }), doc);
+  view.setSelection([{ i: 0, j: 0 }, { i: 1, j: 1 }, { i: 2, j: 2 }, { i: 3, j: 3 }]);
+  return { doc, view, button };
+}
+
+test("the reset button returns every panel at once", () => {
+  // The per-panel double-click resets one; with four independent windows the
+  // way out of a confusing state is resetting them together.
+  const { doc, view, button } = withResetButton();
+  canvasOf(doc, 0).fire("wheel", { deltaY: -1, offsetX: 50 });
+  canvasOf(doc, 2).fire("pointerdown", { offsetX: 10 });
+  canvasOf(doc, 2).fire("pointerup", { offsetX: 80 });
+
+  button.fire("click");
+
+  for (let slot = 0; slot < SLOT_COUNT; slot++) {
+    assert.deepEqual(view.viewportOf(slot), { tickLo: 0, tickHi: 99 }, `slot ${slot}`);
+  }
+});
+
+test("the reset repaints the panels", () => {
+  const { doc, view, button } = withResetButton();
+  canvasOf(doc, 0).fire("wheel", { deltaY: -1, offsetX: 50 });
+
+  reset(doc);
+  button.fire("click");
+
+  assert.ok(ops(doc, SLOTS[0]).length > 0, "the panel was not redrawn");
+});
+
+test("the reset stops the event reaching the scene", () => {
+  const { button } = withResetButton();
+
+  assert.equal(button.fire("click").stopped, true);
+});
+
+test("a missing reset button does not break the view", () => {
+  // The control is markup the payload does not require.
+  const doc = fakeDoc();
+
+  assert.doesNotThrow(() => createCurrentView(payload(), doc));
+});
+
+test("resetting an already-full set of panels is a no-op", () => {
+  const { view, button } = withResetButton();
+
+  button.fire("click");
+
+  assert.deepEqual(view.viewportOf(0), { tickLo: 0, tickHi: 99 });
+});
