@@ -348,6 +348,36 @@ mm.
 Changing the selection resets the animation to tick 0, so a newly selected
 electron never appears mid-drift at a tick it was not animated through.
 
+### Zooming the time axis
+
+The interesting part of a trace is often a narrow spike in a long window, so
+each panel's time axis can be zoomed:
+
+| gesture | effect |
+| --- | --- |
+| drag horizontally across a panel | zoom to the time range the drag covered (either direction) |
+| wheel over a panel | zoom about the pointer, keeping the tick under it put |
+| double-click a panel | reset that panel to the full span |
+| **reset zoom (all panels)** | return all four to the full span at once |
+
+**Each panel zooms independently.** That is deliberate — comparing a spike in
+one path against the whole drift of another is a real thing to want. The
+consequence is that **the four x axes may be showing different time ranges, and
+are then not directly comparable.** The range printed under each panel is the
+window that panel is showing, and it is the only thing that says so; two panels
+that look alike may cover very different spans. When the labels stop agreeing
+and you want a clean slate, **reset zoom (all panels)** is the way back.
+
+**Zoom is time-only.** The vertical scale does not change: each panel stays
+autoscaled to its own peak, with that peak in its title. So zooming in never
+makes a trace look larger relative to another, and the two ways the panels are
+already not comparable — independent amplitude scaling and now independent time
+windows — are both read off the labels rather than the picture.
+
+A zoomed panel keeps its time cursor honest: when the animation's current tick
+falls outside a panel's window, that panel simply has no cursor rather than one
+pinned to an edge, which would put the electron at a time it is not at.
+
 ### Play/pause
 
 **play** advances a **single tick counter** that drives both the drifting dots
