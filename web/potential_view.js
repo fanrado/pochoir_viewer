@@ -674,7 +674,12 @@ export function createContourView(meta, volume, sceneRoot, doc = globalThis.docu
  */
 export const SLICE_MODES = ["image", "contours", "both"];
 
-export function wireSliceModes(sliceView, contourView, doc = globalThis.document) {
+export function wireSliceModes(
+  sliceView,
+  contourView,
+  doc = globalThis.document,
+  { signal } = {},
+) {
   const buttons = new Map(
     SLICE_MODES.map((mode) => [mode, doc.getElementById(`mode-${mode}`)]),
   );
@@ -695,10 +700,13 @@ export function wireSliceModes(sliceView, contourView, doc = globalThis.document
   }
 
   for (const [name, button] of buttons) {
+    // `signal` lets a caller that re-wires on every rebuild drop the previous
+    // set of listeners; without it each rebuild leaves closures holding a
+    // disposed sliceView alive.
     button?.addEventListener("click", () => {
       mode = name;
       apply();
-    });
+    }, signal ? { signal } : undefined);
   }
 
   apply();

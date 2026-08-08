@@ -343,7 +343,15 @@ function buildPotential(meta, volume) {
   // extentMm is already the new field's domain here (selectField refreshes it
   // before loading the potential), so a cropped payload is caught on switch too.
   renderPayloadInfo(meta, extentMm);
-  sliceModes = wireSliceModes(sliceView, contourView);
+  // buildPotential runs again on every field switch, so both sets of mode
+  // listeners must be dropped first: their closures capture the sliceView and
+  // contourView disposePotential has just disposed, and would otherwise keep
+  // those geometries alive for the life of the page.
+  sliceControlsAbort?.abort();
+  sliceControlsAbort = new AbortController();
+  const { signal } = sliceControlsAbort;
+
+  sliceModes = wireSliceModes(sliceView, contourView, document, { signal });
 
   // wireSliceModes sets visibility straight from the mode. Re-gate after every
   // mode click so the slice layer still has the final say, and keep the
@@ -352,7 +360,7 @@ function buildPotential(meta, volume) {
     document.getElementById(`mode-${mode}`)?.addEventListener("click", () => {
       setPressed("layer-contours", mode !== "image");
       applySliceVisibility();
-    });
+    }, { signal });
   }
 
   // Honour whatever the layer buttons currently say, then let the display mode
@@ -401,6 +409,15 @@ let driftAnim = null;
  * around it hoist and hid the problem.
  */
 const selectedPaths = new Set();
+
+/**
+ * Aborts the previous rebuild's mode-button listeners.
+ *
+ * The layer buttons are wired once at module scope and so never accumulate;
+ * the mode buttons are re-wired by every buildPotential, which is why they need
+ * an explicit teardown rather than nothing at all.
+ */
+let sliceControlsAbort = null;
 
 /**
  * ONE tick counter drives both the dots and the plot cursor.
