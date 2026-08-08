@@ -16,7 +16,13 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from pochoir_viewer.current import PIXEL_OFFSET, domain_block, pixel_traces
+import pochoir_viewer.current as current_module
+from pochoir_viewer.current import domain_block
+
+#: The offset the README's table documents. Phase K removed the constant from
+#: both implementations, so the doc is now the only place it is written down --
+#: which is exactly why the section needs the disclaimer tested below.
+PIXEL_OFFSET = 5
 
 N_GRID = 25
 N_PATHS = 100
@@ -82,21 +88,21 @@ def test_the_example_names_several_paths():
 
 def test_every_path_in_the_example_can_actually_be_selected():
     # Was red under the old central-quarter restriction: two of the four cells
-    # the README names threw a RangeError (pochoir_viewer-u9ht). 94799a9 opened
-    # every quarter, so the rule is now the block bounds. Checked by CALLING
-    # pixel_traces rather than restating a range, so whichever side moves next
-    # the two are compared directly.
+    # the README names threw a RangeError (pochoir_viewer-u9ht). Every quarter
+    # is selectable now, and with pixel_traces gone the check is simply that
+    # each documented cell is inside the block the payload ships.
     block = domain_block(labelled_response(), N_PATHS)
+    rows, cols = block.shape[0], block.shape[1]
 
-    broken = []
-    for i, j in documented_selection():
-        try:
-            pixel_traces(block, i, j)
-        except Exception as error:  # noqa: BLE001 -- any failure is a broken example
-            broken.append(f"({i}, {j}): {type(error).__name__}")
+    outside = [
+        f"({i}, {j})"
+        for i, j in documented_selection()
+        if not (0 <= i < rows and 0 <= j < cols)
+    ]
 
-    assert broken == [], (
-        "the README tells the reader to select cells that fail: " + ", ".join(broken)
+    assert outside == [], (
+        "the README tells the reader to select cells outside the block: "
+        + ", ".join(outside)
     )
 
 
@@ -125,9 +131,10 @@ def test_the_offset_table_covers_all_four_panels():
     assert set(offset_table()) == {"central", "x-neighbour", "y-neighbour", "diagonal"}
 
 
-def test_the_documented_offsets_are_the_shipped_offset():
-    # The table hardcodes +5; PIXEL_OFFSET is what the code uses. If the
-    # constant moves, the table becomes wrong in a way no reader can detect.
+def test_the_documented_offsets_are_internally_consistent():
+    # The table hardcodes +5. With the constant gone from both implementations
+    # there is nothing left to check it against, so this checks the table
+    # against itself and the prose's "splits 5 + 5".
     table = offset_table()
 
     assert table["central"] == "i, j"
@@ -136,16 +143,29 @@ def test_the_documented_offsets_are_the_shipped_offset():
     assert table["diagonal"] == f"i+{PIXEL_OFFSET}, j+{PIXEL_OFFSET}"
 
 
-def test_the_documented_offset_matches_the_implementation_that_has_it():
-    # The +5 table describes pixel_traces, which is Python-side and still
-    # there. 75cf870 removed the partner machinery from the BROWSER helper --
-    # the view stopped using it at 7c529b6 when panels became selection slots
-    # -- so requiring the constant there would now fail on working code.
-    assert f"PIXEL_OFFSET = {PIXEL_OFFSET}" in current_py
-    assert "PIXEL_OFFSET" not in build_js, (
-        "the browser helper carries the offset again; if the partner machinery "
-        "is back, this test should check both implementations agree"
+def test_the_offset_table_no_longer_claims_an_implementation():
+    # 75cf870 and 9b6eab3 removed the partner machinery from BOTH sides. The
+    # README's blockquote still says the relationship "is still implemented in
+    # `pixel_traces` and `tracesForPath`" -- neither function exists any more,
+    # so the section sends a reader to code that is not there.
+    assert not hasattr(current_module, "pixel_traces"), "pixel_traces is back"
+
+    stale = [
+        name
+        for name in ("pixel_traces", "tracesForPath")
+        if f"`{name}`" in flat()
+    ]
+    assert stale == [], (
+        "the section still names removed functions as the implementation: "
+        + ", ".join(stale)
     )
+
+
+def test_the_reciprocity_relationship_is_still_true_of_the_data():
+    # The section is not simply wrong: what it describes is a property of the
+    # response array, which survives the code removal. Only the claim about
+    # WHERE it is implemented has rotted.
+    assert "still true of the data" in flat()
 
 
 def test_the_split_is_stated_as_the_offset_doubled():
