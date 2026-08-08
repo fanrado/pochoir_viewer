@@ -36,6 +36,10 @@ build_js = (ROOT / "web" / "current_build.js").read_text()
 view_js = (ROOT / "web" / "current_view.js").read_text()
 anim_js = (ROOT / "web" / "drift_anim.js").read_text()
 
+
+def html_source() -> str:
+    return (ROOT / "web" / "index.html").read_text()
+
 REFERENCE_ROOT = Path(__file__).resolve().parent.parent.parent / "OUTPUT" / "store_largepix_wgrid"
 needs_reference = pytest.mark.skipif(
     not REFERENCE_ROOT.is_dir(), reason=f"reference dataset not present at {REFERENCE_ROOT}"
@@ -442,3 +446,103 @@ def test_it_points_at_the_right_export_product():
     assert "product 5" in flat()
     regen = text[text.index("## Regenerating the input data") :]
     assert "**5. Induced current**" in regen
+
+
+# --- the zoom controls (f546137) ---------------------------------------------
+#
+# Zoom is the second way the four panels stop being comparable, after the
+# per-panel amplitude scaling. Both are read off labels rather than seen in the
+# picture, so the doc is doing the work the picture cannot. Each documented
+# gesture is checked against the handler that implements it.
+
+view_js_zoom = view_js
+
+
+def zoom_section() -> str:
+    start = text.index("### Zooming the time axis")
+    rest = text[start:]
+    end = rest.find("\n### ", 1)
+    body = rest if end == -1 else rest[:end]
+    return " ".join(body.split())
+
+
+def test_the_zoom_section_exists():
+    assert "### Zooming the time axis" in text
+
+
+def test_every_documented_gesture_has_a_handler():
+    # A table promising a gesture the code does not wire is a bug report
+    # waiting to be filed.
+    body = zoom_section()
+
+    assert "drag horizontally" in body and 'addEventListener("pointerdown"' in view_js
+    assert "wheel over a panel" in body and 'addEventListener("wheel"' in view_js
+    assert "double-click a panel" in body and 'addEventListener("dblclick"' in view_js
+
+
+def test_every_wired_gesture_is_documented():
+    # The other direction: an undocumented gesture is undiscoverable, and this
+    # panel gives no visual hint that zoom exists at all.
+    for handler, phrase in (
+        ("pointerdown", "drag"),
+        ("wheel", "wheel"),
+        ("dblclick", "double-click"),
+    ):
+        assert f'addEventListener("{handler}"' in view_js
+        assert phrase in zoom_section().lower(), f"{handler} is wired but not documented"
+
+
+def test_the_reset_all_control_is_documented_by_its_label():
+    # The doc must name the button as it is labelled, or a reader cannot find
+    # it on screen.
+    button = re.search(r'<button id="current-reset-zoom">([^<]*)</button>', html_source())
+
+    assert button, "the reset button is gone"
+    assert button.group(1).strip() in zoom_section()
+
+
+def test_the_drag_is_documented_as_direction_agnostic():
+    # zoomTo runs through clampViewport, which orders the pair.
+    assert "either direction" in zoom_section()
+
+
+def test_the_wheel_anchor_is_documented():
+    assert "keeping the tick under it put" in zoom_section()
+
+
+def test_the_independence_is_documented_with_its_consequence():
+    # The consequence matters more than the feature: four panels showing
+    # different spans look identical apart from their labels.
+    body = zoom_section()
+
+    assert "Each panel zooms independently" in body
+    assert "not directly comparable" in body
+    assert "the only thing that says so" in body
+
+
+def test_zoom_is_documented_as_time_only():
+    # If a reader thought zoom changed the vertical scale, the peak in the
+    # title would stop meaning what it says.
+    body = zoom_section()
+
+    assert "time-only" in body.lower()
+    assert "vertical scale does not change" in body
+
+
+def test_the_time_only_claim_matches_the_code():
+    # peakMagnitude is called on the whole trace, not the visible slice.
+    assert "peakMagnitude([trace])" in view_js
+    assert "peakMagnitude([trace.slice" not in view_js
+
+
+def test_the_omitted_cursor_is_documented():
+    # The subtlest behaviour here, and the one a user would otherwise report
+    # as a missing cursor rather than an honest one.
+    body = zoom_section()
+
+    assert "no cursor rather than one pinned to an edge" in body
+    assert "at a time it is not at" in body
+
+
+def test_the_omitted_cursor_claim_matches_the_code():
+    assert "cursor >= view.tickLo && cursor <= view.tickHi" in view_js
