@@ -533,3 +533,74 @@ test("a start anywhere in the block can be selected", () => {
     assert.doesNotThrow(() => view.setSelection([{ i, j }]), `(${i}, ${j})`);
   }
 });
+
+// --- holes in the slot array (6952850) ----------------------------------------
+//
+// viewer.js passes a fixed-length array with nulls for empty slots, so panel n
+// keeps drawing slot n. Compacting would move every path one panel left when
+// an earlier slot is freed -- the thing an ordered array exists to prevent.
+
+test("a null slot leaves its panel blank without shifting the others", () => {
+  const doc = fakeDoc();
+
+  createCurrentView(payload(), doc).setSelection([{ i: 0, j: 0 }, null, { i: 2, j: 2 }, null]);
+
+  assert.match(titleOf(doc, SLOTS[0]), /\(0, 0\)/);
+  assert.equal(titleOf(doc, SLOTS[1]), undefined, "the hole was filled by a later path");
+  assert.match(titleOf(doc, SLOTS[2]), /\(2, 2\)/);
+  assert.equal(titleOf(doc, SLOTS[3]), undefined);
+});
+
+test("a path keeps its panel when an earlier slot is freed", () => {
+  // The stated point of slot order: deselecting slot 0 must not move slot 1's
+  // path into panel 0.
+  const doc = fakeDoc();
+  const view = createCurrentView(payload(), doc);
+  view.setSelection([{ i: 0, j: 0 }, { i: 1, j: 1 }, null, null]);
+
+  reset(doc);
+  view.setSelection([null, { i: 1, j: 1 }, null, null]);
+
+  assert.equal(titleOf(doc, SLOTS[0]), undefined, "panel 0 still has content");
+  assert.match(titleOf(doc, SLOTS[1]), /\(1, 1\)/, "the path moved out of its panel");
+});
+
+test("a hole keeps its slot colour for the paths after it", () => {
+  // Colour is pathColor(slot), so a hole must not shift the palette either.
+  const doc = fakeDoc();
+
+  createCurrentView(payload(), doc).setSelection([null, { i: 1, j: 1 }, null, { i: 3, j: 3 }]);
+
+  assert.deepEqual([...new Set(curves(doc, SLOTS[1]).map(([, , , c]) => c))], [pathColor(1)]);
+  assert.deepEqual([...new Set(curves(doc, SLOTS[3]).map(([, , , c]) => c))], [pathColor(3)]);
+});
+
+test("a hole gets no legend row", () => {
+  const doc = fakeDoc();
+
+  createCurrentView(payload(), doc).setSelection([{ i: 0, j: 0 }, null, { i: 2, j: 2 }, null]);
+
+  assert.equal(doc.els["current-legend"].children.length, 2);
+});
+
+test("an all-null selection draws and lists nothing", () => {
+  const doc = fakeDoc();
+
+  createCurrentView(payload(), doc).setSelection([null, null, null, null]);
+
+  for (const id of SLOTS) {
+    assert.deepEqual(ops(doc, id).filter(([op]) => op !== "clearRect"), [], id);
+  }
+  assert.equal(doc.els["current-legend"].children.length, 0);
+});
+
+test("a hole gets no cursor", () => {
+  const doc = fakeDoc();
+  const view = createCurrentView(payload(), doc);
+  view.setSelection([{ i: 0, j: 0 }, null, null, null]);
+
+  view.setCursor(2);
+
+  assert.deepEqual(cursorOps(doc, SLOTS[1]), []);
+  assert.ok(cursorOps(doc, SLOTS[0]).length > 0);
+});

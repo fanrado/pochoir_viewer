@@ -108,7 +108,9 @@ test("a freshly loaded payload opens on a path in the central quarter", () => {
   // tracesForPath throws outside [0, 5), so an out-of-quarter default would
   // turn a successful load into the catch branch. 6ed3d79 moved the default
   // from a literal setSelection into the selector's seed key.
-  const match = source.match(/if \(selectedPaths\.size === 0\) selectedPaths\.add\("(\d+),(\d+)"\)/);
+  // 6952850 replaced the Set with a fixed-length slot array, so the seed is
+  // a slot assignment rather than an add.
+  const match = source.match(/selectedSlots\[0\] = "(\d+),(\d+)"/);
 
   assert.ok(match, "no initial selection is made");
   for (const n of [Number(match[1]), Number(match[2])]) {
@@ -314,24 +316,76 @@ test("the cell is painted from the result, not before the attempt", () => {
   assert.ok(applied > 0 && painted > applied, "aria-pressed is set before the draw is attempted");
 });
 
-test("a failed toggle rolls the model back", () => {
-  // Otherwise the set and the button disagree, and the next click computes
-  // the wrong toggle.
+test("a failed toggle restores the slot's previous occupant", () => {
+  // Otherwise the model and the button disagree, and the next click computes
+  // the wrong toggle. 6952850 restores the exact previous value rather than
+  // re-deriving it, which also preserves the slot INDEX.
   const handler = source.slice(source.indexOf("cell.addEventListener"));
   const branch = handler.slice(handler.indexOf("} else {"), handler.indexOf("});"));
 
-  assert.match(branch, /wasSelected \? selectedPaths\.add\(key\) : |if \(wasSelected\) selectedPaths\.add\(key\)/);
-  assert.match(branch, /selectedPaths\.delete\(key\)/);
-  assert.match(branch, /String\(wasSelected\)/);
+  assert.match(branch, /selectedSlots\[target\] = previous/);
+  assert.match(branch, /String\(held >= 0\)/);
 });
 
 test("clear all rolls back too", () => {
   // The same invariant for the bulk control: a failed clear must not leave
-  // the set empty while the buttons still look pressed.
+  // the slots empty while the buttons still look pressed. Order matters here,
+  // so the rollback restores by index.
   const handler = source.slice(source.indexOf('getElementById("path-clear")'));
 
-  assert.match(handler.slice(0, 600), /const previous = new Set\(selectedPaths\)/);
-  assert.match(handler.slice(0, 600), /for \(const key of previous\) selectedPaths\.add\(key\)/);
+  assert.match(handler.slice(0, 700), /const previous = \[\.\.\.selectedSlots\]/);
+  assert.match(handler.slice(0, 700), /previous\.forEach\(\(key, n\) => \{ selectedSlots\[n\] = key; \}\)/);
+});
+
+test("a fifth selection is refused rather than evicting a slot", () => {
+  // Silently dropping the oldest would move another path out of its panel
+  // without the user asking for it.
+  const handler = source.slice(source.indexOf("cell.addEventListener"));
+
+  assert.match(handler.slice(0, 1200), /if \(target < 0\)/);
+  assert.match(handler.slice(0, 1200), /at most \$\{SELECTION_SLOTS\} paths/);
+  assert.match(handler.slice(0, 1200), /return;/);
+});
+
+test("a refused selection does not flip the button", () => {
+  // The refusal returns before both the slot write and the aria-pressed set.
+  const handler = source.slice(source.indexOf("cell.addEventListener"), source.indexOf("path-clear"));
+  const refusal = handler.indexOf("if (target < 0)");
+  const write = handler.indexOf("selectedSlots[target] =");
+  const paint = handler.indexOf("cell.setAttribute");
+
+  assert.ok(refusal > 0 && write > refusal, "the slot is written before the cap check");
+  assert.ok(paint > refusal, "aria-pressed is set before the cap check");
+});
+
+test("a deselected slot is freed for reuse, keeping panel positions stable", () => {
+  // The stated reason for an ordered array over a Set: a path keeps its panel
+  // for as long as it stays selected, instead of shuffling when a neighbour
+  // is removed.
+  const handler = source.slice(source.indexOf("cell.addEventListener"));
+
+  assert.match(handler.slice(0, 1200), /const held = slotOf\(key\)/);
+  assert.match(handler.slice(0, 1200), /const target = held >= 0 \? held : freeSlot\(\)/);
+  assert.match(source, /function freeSlot\(\)[\s\S]{0,120}indexOf\(null\)/);
+});
+
+test("the slot array is fixed-length, so holes are real", () => {
+  assert.match(source, /const SELECTION_SLOTS = 4/);
+  assert.match(source, /new Array\(SELECTION_SLOTS\)\.fill\(null\)/);
+});
+
+test("holes are passed through to the view rather than compacted", () => {
+  // Panel n must keep drawing slot n; compacting would move every path left
+  // when an earlier slot is freed.
+  const body = functionBody("applyPathSelection");
+
+  assert.match(body, /selectedSlots\.map\(\(key\) => \{/);
+  assert.match(body, /if \(!key\) return null/);
+});
+
+test("the dots ignore the holes", () => {
+  // driftAnim indexes paths, not slots, so a null would map to NaN.
+  assert.match(functionBody("applyPathSelection"), /picks\.filter\(Boolean\)\.map/);
 });
 
 test("clear all only repaints the cells once the clear succeeded", () => {
@@ -414,15 +468,15 @@ test("every binding touched during module evaluation is declared before it", () 
   assert.deepEqual(late, [], `temporal dead zone at module evaluation:\n${late.join("\n")}`);
 });
 
-test("selectedPaths specifically is declared with the module state", () => {
-  // The symbol that actually broke, kept as its own check so a regression
-  // names it directly.
+test("the selection state specifically is declared with the module state", () => {
+  // The binding that actually broke in 3cc9bf5, kept as its own check so a
+  // regression names it directly. Renamed to selectedSlots by 6952850.
   const bindings = topLevelBindings();
 
-  assert.ok(bindings.has("selectedPaths"), "selectedPaths is no longer top-level");
+  assert.ok(bindings.has("selectedSlots"), "selectedSlots is no longer top-level");
   assert.ok(
-    bindings.get("selectedPaths") < moduleEvalLine(),
-    "selectedPaths is declared after the module-scope selectField call again",
+    bindings.get("selectedSlots") < moduleEvalLine(),
+    "selectedSlots is declared after the module-scope selectField call again",
   );
 });
 
@@ -430,17 +484,16 @@ test("it sits with the other current-view state, not with the selector functions
   // Where it is matters as much as that it works: the next person to tidy
   // these functions together would reintroduce the bug.
   const bindings = topLevelBindings();
-  const selectedPaths = bindings.get("selectedPaths");
 
   assert.ok(
-    Math.abs(selectedPaths - bindings.get("driftAnim")) < 20,
-    "selectedPaths drifted away from driftAnim and the rest of the module state",
+    Math.abs(bindings.get("selectedSlots") - bindings.get("driftAnim")) < 30,
+    "selectedSlots drifted away from driftAnim and the rest of the module state",
   );
 });
 
 test("the reason it must stay put is recorded next to it", () => {
   // A bare `const selectedPaths = new Set()` invites being moved back.
-  const declaration = source.indexOf("const selectedPaths = new Set()");
+  const declaration = source.indexOf("const selectedSlots = new Array(");
   const preceding = source.slice(Math.max(0, declaration - 700), declaration);
 
   assert.match(preceding, /temporal dead zone|TDZ/i);

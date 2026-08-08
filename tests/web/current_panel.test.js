@@ -173,3 +173,68 @@ test("the readout is still the last fixed element declared", () => {
     "the panel was inserted after the readout",
   );
 });
+
+// --- the 3x enlargement (e1bdfa1) --------------------------------------------
+//
+// The panel went from 260px wide with 60px canvases to 780px with 180px ones.
+// Both fixed panels are pinned to opposite edges at fixed widths, so the two
+// now have a hard minimum viewport width below which they overlap. That is
+// arithmetic, not opinion, so it is computed rather than asserted as a number.
+
+function px(rule_, name) {
+  const match = rule_.match(new RegExp(`${name}: (\\d+)px`));
+  return match ? Number(match[1]) : null;
+}
+
+test("the canvases are tall enough to read a waveform", () => {
+  // A 60px panel showed a bipolar trace as ~25px of swing either side.
+  assert.ok(px(rule("#current-grid canvas"), "height") >= 120);
+});
+
+test("all four canvases are the same size", () => {
+  // "so no slot reads as more important than another" -- with the panels now
+  // holding four unrelated paths, a larger first panel would imply a primary.
+  const css = rule("#current-grid canvas");
+
+  assert.match(css, /width: 100%/);
+  assert.equal(rule('#current-grid canvas:first-child'), null, "a per-canvas override appeared");
+});
+
+test("the grid is still 2x2", () => {
+  assert.match(rule("#current-grid"), /grid-template-columns: 1fr 1fr/);
+});
+
+test("the two fixed panels need a wide window not to overlap", () => {
+  // Computed from the stylesheet: left panel + right panel + both insets.
+  // Recorded rather than judged -- if this exceeds a laptop's viewport it is
+  // worth a decision, and either way a future width change moves it visibly.
+  const current = rule("#current-panel");
+  const main = rule("#panel");
+  const minimum =
+    px(main, "left") + px(main, "width") + px(current, "width") + px(current, "right");
+
+  assert.equal(minimum, 1024, `the panels now need ${minimum}px of width, not 1024`);
+});
+
+test("the enlarged panel still clears the view cube", () => {
+  // Widening moves it left, not up, so the cube offset is unchanged -- but
+  // this is the check that would catch a top: edit made alongside a width one.
+  const expected = viewcubeConst("INSET_PX") * 2 + viewcubeConst("SIZE_PX");
+
+  assert.match(rule("#current-panel"), new RegExp(`top: ${expected}px`));
+});
+
+test("the panel still does not swallow drags meant for the canvas", () => {
+  // It now covers three times as much of the window, so the pointer-events
+  // discipline matters more than it did, not less.
+  assert.match(rule("#current-panel"), /pointer-events: none/);
+  assert.match(rule("#current-grid canvas"), /pointer-events: auto/);
+});
+
+test("the layout comment describes selection slots, not pad neighbours", () => {
+  // The CSS comment was the last place the pad-role reading survived.
+  const css = html.slice(html.indexOf("#current-grid canvas") - 400, html.indexOf("#current-grid canvas"));
+
+  assert.match(css, /SELECTION SLOTS/);
+  assert.equal(/the x-neighbour beside it/.test(css), false);
+});
