@@ -65,13 +65,24 @@ test("the browser helper no longer exports partner machinery", () => {
 });
 
 test("what it does export is the single-cell read and the plotting maths", () => {
+  // Exhaustive on purpose: a new export here is a new piece of shared surface
+  // and should be a deliberate edit, not a silent one. The viewport group
+  // arrived with Phase N/Step 1 and is time-axis only.
   assert.deepEqual(Object.keys(build).sort(), [
+    "MIN_VIEWPORT_TICKS",
+    "clampViewport",
     "fetchCurrent",
+    "fullViewport",
     "peakMagnitude",
+    "resetViewport",
     "tickToUs",
     "tickToX",
+    "tickToXIn",
     "traceAt",
     "valueToY",
+    "xToTickIn",
+    "zoomBy",
+    "zoomTo",
   ]);
 });
 
