@@ -18,11 +18,8 @@ import pytest
 
 from pochoir_viewer.io import find_response
 from pochoir_viewer.current import (
-    PIXEL_OFFSET,
-    partner_index,
     domain_block,
     load_response,
-    pixel_traces,
 )
 
 REFERENCE_SHAPE = (625, 3999)  # the shape the docstring cites
@@ -204,159 +201,6 @@ def test_n_and_m_are_derived_rather_than_assumed():
     assert block[3, 3, 0] == 303
 
 
-# --- pixel_traces ------------------------------------------------------------
-#
-# a580d01 changed the return to an ordered list of {"index": [a, b], "trace"}
-# and deliberately dropped the central/neighbor_x/neighbor_y/diagonal names.
-# That was the right call and it is worth recording why, because the names are
-# the obvious thing to reintroduce: they assert which pad collects the charge,
-# and that assertion rotates with the quarter. It held for the 25 starts in the
-# first quarter and was wrong for the other 75, which filed their collection
-# trace under an induction heading -- and a mislabelled plot looks plausible.
-# The tests below therefore check INDICES and measured physics, never a role.
-
-
-def block10(t: int = 3) -> np.ndarray:
-    return domain_block(labelled(10, t), 100)
-
-
-def indices(traces) -> list[tuple[int, int]]:
-    return [tuple(entry["index"]) for entry in traces]
-
-
-def test_four_partner_traces_are_returned():
-    traces = pixel_traces(block10(), 0, 0)
-
-    assert len(traces) == 4
-    assert all(set(entry) == {"index", "trace"} for entry in traces)
-
-
-def test_the_partners_are_the_cells_the_docstring_names():
-    # "a start at (7, 2) reads (7, 2), (2, 2), (7, 7) and (2, 7)".
-    assert indices(pixel_traces(block10(), 7, 2)) == [(7, 2), (2, 2), (7, 7), (2, 7)]
-
-
-def test_the_order_is_start_then_x_then_y_then_both():
-    # The order is the contract now that there are no keys: a caller labels
-    # panels from position, so a reordering would silently swap two plots.
-    assert indices(pixel_traces(block10(), 1, 2)) == [(1, 2), (6, 2), (1, 7), (6, 7)]
-
-
-def test_the_first_entry_is_always_the_start_itself():
-    block = block10()
-
-    for i in (0, 4, 5, 9):
-        for j in (0, 4, 5, 9):
-            assert indices(pixel_traces(block, i, j))[0] == (i, j)
-
-
-def test_each_trace_is_the_cell_its_index_names():
-    # The pairing is the whole payload; a trace under the wrong index is the
-    # mislabelling this shape exists to prevent.
-    block = block10()
-
-    for entry in pixel_traces(block, 3, 4):
-        a, b = entry["index"]
-        np.testing.assert_array_equal(entry["trace"], block[a, b])
-
-
-def test_no_role_names_are_reintroduced():
-    # A regression guard with a reason: see the module note above and
-    # pochoir_viewer-154c.
-    traces = pixel_traces(block10(), 7, 3)
-
-    for entry in traces:
-        assert "central" not in entry
-        assert "neighbor_x" not in entry
-
-
-def test_the_traces_are_views_not_copies():
-    block = block10()
-
-    entry = pixel_traces(block, 0, 0)[0]
-
-    assert entry["trace"].base is not None
-
-
-def test_a_trace_keeps_the_full_sample_axis():
-    for entry in pixel_traces(block10(t=3999), 0, 0):
-        assert entry["trace"].shape == (3999,)
-
-
-def test_the_four_cells_are_distinct_in_every_quarter():
-    block = block10()
-
-    for i in range(10):
-        for j in range(10):
-            assert len(set(indices(pixel_traces(block, i, j)))) == 4, f"({i}, {j})"
-
-
-def test_every_start_in_the_block_is_accepted():
-    # The point of 94799a9: three quarters of the domain used to raise.
-    block = block10()
-
-    for i in range(10):
-        for j in range(10):
-            assert len(pixel_traces(block, i, j)) == 4
-
-
-@pytest.mark.parametrize("i, j", [(-1, 0), (0, -1), (10, 0), (0, 10), (99, 99)])
-def test_a_start_outside_the_block_is_refused(i, j):
-    with pytest.raises(ValueError, match="outside the"):
-        pixel_traces(block10(), i, j)
-
-
-def test_the_refusal_names_the_position_and_the_block():
-    with pytest.raises(ValueError, match=r"\(12, 2\).*10x10"):
-        pixel_traces(block10(), 12, 2)
-
-
-def test_the_partner_relation_is_its_own_inverse():
-    # partner(partner(k)) == k, or the four cells would not close into two
-    # pairs.
-    for half in (2, 5, 8):
-        for k in range(2 * half):
-            assert partner_index(partner_index(k, half), half) == k
-
-
-def test_the_partner_mirrors_rather_than_always_adding():
-    # Always adding is what ran off the end of the block for k >= half.
-    assert partner_index(2, 5) == 7
-    assert partner_index(7, 5) == 2
-
-
-def test_the_half_width_is_derived_from_the_block():
-    # "half is derived from the block shape": a 6x6 block must use 3.
-    block = domain_block(labelled(6), 36)
-
-    assert indices(pixel_traces(block, 1, 1)) == [(1, 1), (4, 1), (1, 4), (4, 4)]
-
-
-def test_a_narrow_block_no_longer_indexes_out_of_range():
-    # This used to die on a bare numpy IndexError: the old guard checked i and
-    # j against PIXEL_OFFSET but never the block width.
-    small = domain_block(labelled(10), 16)
-
-    assert indices(pixel_traces(small, 0, 0)) == [(0, 0), (2, 0), (0, 2), (2, 2)]
-
-
-def test_pixel_offset_is_half_the_reference_domain_width():
-    # Kept as the documented value for the 10-wide domain even though
-    # pixel_traces no longer reads it.
-    assert PIXEL_OFFSET == 5
-
-
-def test_the_four_cells_are_the_same_set_across_a_quarter_group():
-    # Not a defect -- a property worth stating, because it is what makes the
-    # selector's extra 75 cells redundant rather than informative. Every start
-    # in a quarter group reads the same four cells; only the order differs.
-    block = block10()
-    base = set(indices(pixel_traces(block, 2, 3)))
-
-    for i, j in [(7, 3), (2, 8), (7, 8)]:
-        assert set(indices(pixel_traces(block, i, j))) == base
-
-
 # --- against the real dataset ------------------------------------------------
 #
 # The reference dataset lives outside the repo, so these skip when it is
@@ -420,24 +264,6 @@ def test_the_collected_trace_dominates_the_induced_one():
 
 
 @needs_reference
-def test_exactly_one_of_the_four_partners_is_a_collection():
-    # Whatever the caller labels them, each set of four contains one arriving
-    # charge and three inductions. That is the invariant a panel layout can
-    # safely be built on.
-    block = reference_block()
-
-    for i, j in [(2, 3), (7, 3), (2, 8), (7, 8), (0, 0), (9, 9)]:
-        collected = [
-            entry
-            for entry in pixel_traces(block, i, j)
-            if entry["trace"].min() > -1e-9
-        ]
-        assert len(collected) == 1, (
-            f"({i}, {j}) has {len(collected)} unipolar traces, expected exactly 1"
-        )
-
-
-@needs_reference
 def test_all_one_hundred_rows_are_distinct_responses():
     # a580d01 relies on this: the rows are not copies of one quarter.
     block = reference_block()
@@ -446,26 +272,12 @@ def test_all_one_hundred_rows_are_distinct_responses():
     assert len(seen) == 100
 
 
-@needs_reference
-def test_the_four_partner_cells_repeat_across_a_quarter_group():
-    # The redundancy noted synthetically above, confirmed on real data: 100
-    # starts, 25 distinct sets of four. Relevant to pochoir_viewer-u9ht --
-    # the extra cells are redundant rather than invalid.
-    block = reference_block()
-    sets = {
-        frozenset(tuple(e["index"]) for e in pixel_traces(block, i, j))
-        for i in range(10)
-        for j in range(10)
-    }
-
-    assert len(sets) == 25
-
-
 # --- the path index orientation ----------------------------------------------
 #
-# pixel_traces takes (i, j) directly, so nothing in this module yet converts a
-# path index. But every caller will, and the convention is p = i*10 + j with i
-# from x and j from y. THE fr FILE STATES NOTHING ABOUT ITS OWN ORIENTATION --
+# Nothing in this module converts a path index. But every caller does -- the
+# viewer's selector maps a clicked cell to a block row -- and the convention is
+# p = i*10 + j with i from x and j from y. THE fr FILE STATES NOTHING ABOUT ITS
+# OWN ORIENTATION --
 # this is inferred from the path start lattice, and a transposed response would
 # otherwise pass silently, plotting a real waveform from the wrong pixel. So it
 # is pinned here, against the lattice it was inferred from, before a caller

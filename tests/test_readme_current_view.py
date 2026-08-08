@@ -19,11 +19,6 @@ import pytest
 import pochoir_viewer.current as current_module
 from pochoir_viewer.current import domain_block
 
-#: The offset the README's table documents. Phase K removed the constant from
-#: both implementations, so the doc is now the only place it is written down --
-#: which is exactly why the section needs the disclaimer tested below.
-PIXEL_OFFSET = 5
-
 N_GRID = 25
 N_PATHS = 100
 
@@ -118,69 +113,35 @@ def test_the_example_curve_count_matches_the_paths_it_picks():
     assert words.get(stated.group(1)) == len(documented_selection())
 
 
-# --- the reciprocity offsets --------------------------------------------------
+# --- the reciprocity rule is gone ---------------------------------------------
+#
+# Phase K removed the partner machinery from both implementations and Phase L
+# removed the prose. What is left to protect is that the OLD MEANING does not
+# creep back: a reader who carries it across reads every panel as a neighbouring
+# pad rather than as its own selected path.
 
 
-def offset_table() -> dict[str, str]:
-    """The panel -> block-index table."""
-    rows = re.findall(r"\| ([\w-]+) \| `block\[([^\]]+)\]` \|", section())
-    return {panel: index for panel, index in rows}
+def test_the_section_does_not_describe_partner_pads():
+    body = flat()
+
+    for stale in ("x-neighbour", "y-neighbour", "reciprocity", "block[i+"):
+        assert stale not in body, f"the section still describes partner pads: {stale!r}"
 
 
-def test_the_offset_table_covers_all_four_panels():
-    assert set(offset_table()) == {"central", "x-neighbour", "y-neighbour", "diagonal"}
+def test_the_section_names_removed_functions_nowhere():
+    for name in ("pixel_traces", "tracesForPath", "partner_index", "PIXEL_OFFSET"):
+        assert not hasattr(current_module, name), f"{name} is back in the module"
+        assert name not in flat(), f"the section still points at {name}"
 
 
-def test_the_documented_offsets_are_internally_consistent():
-    # The table hardcodes +5. With the constant gone from both implementations
-    # there is nothing left to check it against, so this checks the table
-    # against itself and the prose's "splits 5 + 5".
-    table = offset_table()
+def test_the_panels_are_stated_to_be_four_separate_electrons():
+    # The correction that matters: the previous README described one electron's
+    # effect on four pads, so silence here would let the old reading survive.
+    body = flat()
 
-    assert table["central"] == "i, j"
-    assert table["x-neighbour"] == f"i+{PIXEL_OFFSET}, j"
-    assert table["y-neighbour"] == f"i, j+{PIXEL_OFFSET}"
-    assert table["diagonal"] == f"i+{PIXEL_OFFSET}, j+{PIXEL_OFFSET}"
+    assert "not one electron" in body, "the section does not rule out the old reading"
+    assert "own pad" in body
 
-
-def test_the_offset_table_no_longer_claims_an_implementation():
-    # 75cf870 and 9b6eab3 removed the partner machinery from BOTH sides. The
-    # README's blockquote still says the relationship "is still implemented in
-    # `pixel_traces` and `tracesForPath`" -- neither function exists any more,
-    # so the section sends a reader to code that is not there.
-    assert not hasattr(current_module, "pixel_traces"), "pixel_traces is back"
-
-    stale = [
-        name
-        for name in ("pixel_traces", "tracesForPath")
-        if f"`{name}`" in flat()
-    ]
-    assert stale == [], (
-        "the section still names removed functions as the implementation: "
-        + ", ".join(stale)
-    )
-
-
-def test_the_reciprocity_relationship_is_still_true_of_the_data():
-    # The section is not simply wrong: what it describes is a property of the
-    # response array, which survives the code removal. Only the claim about
-    # WHERE it is implemented has rotted.
-    assert "still true of the data" in flat()
-
-
-def test_the_split_is_stated_as_the_offset_doubled():
-    # "The 10-wide domain splits 5 + 5" -- the two halves are what make the
-    # offset meaningful.
-    assert f"splits {PIXEL_OFFSET} + {PIXEL_OFFSET}" in flat()
-
-
-def test_the_assumption_is_flagged_rather_than_presented_as_fact():
-    # The source carries an explicit ASSUMPTION note; the doc must not read
-    # more confidently than the code it describes.
-    body = section()
-
-    assert "not from anything recorded in the file" in flat()
-    assert "assumption" in body.lower()
 
 
 # --- the row-to-path mapping --------------------------------------------------
@@ -331,15 +292,6 @@ def test_the_slot_reuse_is_documented():
     assert "Deselecting frees that slot in place" in body
     assert "keeps its panel position" in body
 
-
-def test_the_reciprocity_subsection_disclaims_the_panels():
-    # It documents a real relationship that the VIEW no longer draws; without
-    # the note a reader would map the table onto the four panels.
-    body = flat()
-
-    assert "Not what the panels show" in body
-    assert "nothing in the viewer draws it any more" in body
-    assert "| pad | row |" in section(), "the table header still says 'panel'"
 
 
 def test_the_panels_section_describes_what_the_panels_now_show():

@@ -304,6 +304,13 @@ on that pad's neighbours? Export the payload first — see
 
 ### Reading the four panels
 
+**Four electrons on their own pad — not one electron's effect on four pads.**
+Each panel is a different selected path, showing the current that path induces
+on the pad it belongs to. An earlier version showed the opposite: a single
+selected electron and its effect on four neighbouring pads, inferred by a rule
+relating one path to its partner cells. Nothing implements that any more, and
+reading these panels that way would be wrong.
+
 The 2x2 grid is four **selection slots**, not one path's neighbours. Panel *n*
 shows the *n*th selected path and nothing else: that path's own `fr[i, j, :]`,
 titled with its `(i, j)`. Select one path and only the top-left panel has
@@ -363,31 +370,6 @@ the strided set of rows 0–9, 25–34, 50–59, … for `N = 25, M = 10`. Takin
 sliver of its height — so every plotted waveform would belong to a different
 source position than the one selected. Reshape to `(N, N, T)` first, then slice
 `[:M, :M]`.
-
-### Why one path relates to four traces
-
-> **Not what the panels show.** The four panels are selection slots, one per
-> selected path. The reciprocity relationship below is still true of the data
-> and is still implemented in `pixel_traces` and `tracesForPath`, but nothing in
-> the viewer draws it any more — the view was deliberately changed so that no
-> neighbour is ever inferred from a single selection.
-
-A response row is indexed by the electron's **starting** position, not by the
-pixel the current lands on. By reciprocity the quarter of the domain a start
-falls in identifies which pixel picks up the current, so the four pixels a
-single path induces on are four different rows of the same block. The 10-wide
-domain splits 5 + 5, so for a start in the central quarter the traces are:
-
-| pad | row |
-| --- | --- |
-| central | `block[i, j]` |
-| x-neighbour | `block[i+5, j]` |
-| y-neighbour | `block[i, j+5]` |
-| diagonal | `block[i+5, j+5]` |
-
-Those `+5` offsets come from the description of the `fr` layout, not from
-anything recorded in the file. If the traces ever look wrong, that assumption
-is the first thing to question — not the offsets to quietly adjust.
 
 ### Ticks against decimated paths
 
