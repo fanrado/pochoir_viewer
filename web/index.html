@@ -107,7 +107,7 @@
      (viewcube.js:9-10). So this panel clears it at 12 + 96 + 12 = 120px.
      Changing either constant means changing this offset. */
   #current-panel {
-    position: fixed; top: 120px; right: 12px; width: 260px; padding: 8px;
+    position: fixed; top: 120px; right: 12px; width: 780px; padding: 8px;
     background: rgba(255, 255, 255, 0.92); border-radius: 6px;
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
     box-sizing: border-box;
@@ -120,11 +120,11 @@
   #current-grid {
     display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 4px;
   }
-  /* The 2x2 grid mirrors the pixels in space: the central pixel is at the
-     origin corner, the x-neighbour beside it, the y-neighbour below it, and
-     the diagonal neighbour opposite. */
+  /* The 2x2 grid is four SELECTION SLOTS, not one path's neighbours: panel n
+     draws the nth selected path and an unfilled slot stays blank. All four are
+     the same size, so no slot reads as more important than another. */
   #current-grid canvas {
-    width: 100%; height: 60px; display: block;
+    width: 100%; height: 180px; display: block;
     background: #fff; border: 1px solid #bbb; border-radius: 3px;
     pointer-events: auto;
   }
