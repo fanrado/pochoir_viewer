@@ -42,9 +42,14 @@ export async function fetchCurrent(base = "data", name = "current.json") {
 /**
  * One (T,) trace out of the flat (M, M, T) buffer, without copying.
  *
- * The buffer is C-order, so the trace for (i, j) is one contiguous run.
+ * The buffer is C-order, so the trace for (i, j) is one contiguous run:
+ * `fr[i, j, :]` starts at `(i * cols + j) * nTicks`.
+ *
+ * Exported so a caller that wants ONE cell's own trace can read it directly
+ * rather than going through tracesForPath, which returns a cell plus its three
+ * mirrored partners. This is the only place the buffer offset is computed.
  */
-function traceAt({ meta, block }, i, j) {
+export function traceAt({ meta, block }, i, j) {
   const [, m, t] = meta.shape;
   const start = (i * m + j) * t;
   return block.subarray(start, start + t);
