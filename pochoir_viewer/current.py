@@ -69,67 +69,6 @@ def domain_block(response: np.ndarray, n_paths: int) -> np.ndarray:
     return response.reshape(n, n, -1)[:m, :m, :]
 
 
-#: Half-width of the reference 10-wide drift domain.
-#:
-#: Retained as the documented value for that domain; :func:`pixel_traces`
-#: derives the half-width from the block it is given rather than reading this,
-#: so a differently sized block works without touching it.
-PIXEL_OFFSET = 5
-
-
-def partner_index(k: int, half: int) -> int:
-    """The index of ``k``'s partner in the other quarter along one axis.
-
-    The partner MIRRORS about the quarter boundary rather than always adding
-    ``half``: below the boundary it is ``k + half``, at or above it is
-    ``k - half``. Always adding would run off the end of the block for any
-    ``k >= half``, which is why three quarters of the domain used to raise.
-    """
-    return k + half if k < half else k - half
-
-
-def pixel_traces(block: np.ndarray, i: int, j: int) -> list[dict]:
-    """The four in-block partner traces for the path starting at ``(i, j)``.
-
-    Returns an ordered list of ``{"index": [a, b], "trace": ...}`` — the four
-    partners ``(i, j)``, ``(px, j)``, ``(i, py)``, ``(px, py)``, where the
-    partner index mirrors about the quarter boundary (:func:`partner_index`)
-    and ``half`` is derived from the block shape. So a start at ``(7, 2)``
-    reads ``(7, 2)``, ``(2, 2)``, ``(7, 7)`` and ``(2, 7)``. Every ``(i, j)``
-    inside the block is valid; only out-of-block indices are rejected.
-
-    KEYED BY BLOCK INDEX, DELIBERATELY, and asserting nothing about pad role.
-    Naming these 'central' / 'neighbor_x' / 'neighbor_y' / 'diagonal' claims
-    which pad collects the charge, and that claim rotates with the quarter: it
-    holds for the 25 starts in the first quarter and is wrong for the other 75,
-    which filed their collection trace under an induction heading. A
-    mislabelled plot still looks plausible, so the labelling is left to the
-    caller, which has the index pair and can name panels from it.
-
-    RECIPROCITY, now measured rather than assumed. Row ``(i, j)`` is the
-    current induced on ONE FIXED PAD by an electron starting at ``(i, j)``. A
-    start inside that pad's collecting quarter gives a UNIPOLAR trace — the
-    charge arrives — while a start outside it gives a BIPOLAR trace that
-    integrates to zero, pure induction as the electron passes. Measured on the
-    reference dataset: ``block[2, 3]`` has sum+ 2.000e-02 against sum- 2.7e-17
-    (collected), whereas ``block[7, 3]`` has sum+ = sum- = 8.184e-04 (induced
-    only). All 100 rows are distinct responses, so folding to the first quarter
-    would discard real data.
-    """
-    rows, cols = block.shape[0], block.shape[1]
-    if not (0 <= i < rows and 0 <= j < cols):
-        raise ValueError(
-            f"start position ({i}, {j}) is outside the {rows}x{cols} block"
-        )
-
-    px = partner_index(i, rows // 2)
-    py = partner_index(j, cols // 2)
-    return [
-        {"index": [a, b], "trace": block[a, b]}
-        for a, b in ((i, j), (px, j), (i, py), (px, py))
-    ]
-
-
 def write_current(
     root: str | Path,
     dest_dir: str | Path,
