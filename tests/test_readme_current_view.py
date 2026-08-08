@@ -14,6 +14,7 @@ import re
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from pochoir_viewer.current import PIXEL_OFFSET, domain_block, pixel_traces
 
@@ -45,9 +46,14 @@ def section() -> str:
 
 
 def flat() -> str:
-    """The section with whitespace normalised: the README hard-wraps, so a
-    quoted phrase can straddle a line break."""
-    return " ".join(section().split())
+    """The section as prose: hard wrapping and blockquote markers removed.
+
+    The README wraps, so a quoted phrase can straddle a line break, and the
+    reciprocity note is a blockquote whose `>` markers land mid-sentence once
+    the wrapping is collapsed.
+    """
+    body = re.sub(r"^\s*>\s?", "", section(), flags=re.M)
+    return " ".join(body.split())
 
 
 def test_the_section_exists():
@@ -218,6 +224,52 @@ def test_the_stated_ratio_follows_from_the_two_numbers():
 # --- the claims about the view's behaviour ------------------------------------
 
 
+def test_the_slot_semantics_are_described():
+    body = flat()
+
+    assert "four **selection slots**" in body
+    assert "not one path's neighbours" in body
+    assert "Panel *n*" in body and "*n*th selected path" in body
+    assert "the other three stay completely blank" in body
+
+
+def test_the_fill_order_matches_the_grid():
+    # Source order in index.html is central, neighbor-x, neighbor-y, diagonal
+    # in a 2-column grid, so slots fill top-left, top-right, bottom-left,
+    # bottom-right. A reader checks the panel they expect against this.
+    body = flat()
+
+    assert "only the top-left panel has content" in body
+    assert "The second selection fills the top-right, the third the bottom-left, the fourth the bottom-right." in body
+
+
+def test_the_four_slot_cap_and_its_refusal_are_documented():
+    body = flat()
+
+    assert "up to four" in body
+    assert "four is the limit" in body
+    assert "a fifth click is refused outright" in body
+    assert "the cell does not toggle" in body
+
+
+def test_the_slot_reuse_is_documented():
+    # Why an ordered array rather than a set: the panel position is stable.
+    body = flat()
+
+    assert "Deselecting frees that slot in place" in body
+    assert "keeps its panel position" in body
+
+
+def test_the_reciprocity_subsection_disclaims_the_panels():
+    # It documents a real relationship that the VIEW no longer draws; without
+    # the note a reader would map the table onto the four panels.
+    body = flat()
+
+    assert "Not what the panels show" in body
+    assert "nothing in the viewer draws it any more" in body
+    assert "| pad | row |" in section(), "the table header still says 'panel'"
+
+
 def test_the_panels_section_describes_what_the_panels_now_show():
     # 7c529b6 changed what a panel IS: panel n is selection slot n, showing the
     # nth selected path's own trace. The section still describes the previous
@@ -250,14 +302,72 @@ def test_the_shared_scale_claim_matches_the_code():
 
 def test_the_per_panel_peak_is_documented_if_the_scales_differ():
     # With per-panel autoscale the title's peak is the ONLY thing making the
-    # four comparable, so it has to be documented.
+    # four comparable, so it has to be documented -- and the warning matters
+    # more than the mechanism, since the natural reading of two same-height
+    # curves is that they are the same size.
     if "function sharedPeak()" in view_js:
         return
 
-    assert "peak" in flat().lower(), (
-        "each panel autoscales now, but the section does not mention the "
-        "per-panel peak that makes them comparable"
+    body = flat()
+    assert "autoscales to its own trace" in body
+    assert "curve heights are not comparable between panels" in body
+    assert "peak printed in each title" in body
+    assert "read that, not the drawn amplitude" in body.lower()
+
+
+def test_the_title_really_does_carry_the_peak():
+    # The doc's advice is only useful if the code prints it.
+    assert "peak ${peak.toExponential(2)}" in view_js
+
+
+# --- the quoted amplitudes, against the real dataset --------------------------
+
+REFERENCE_ROOT = Path(__file__).resolve().parent.parent.parent / "OUTPUT" / "store_largepix_wgrid"
+needs_reference = pytest.mark.skipif(
+    not REFERENCE_ROOT.is_dir(), reason=f"reference dataset not present at {REFERENCE_ROOT}"
+)
+
+
+def reference_peaks():
+    from pochoir_viewer.current import load_response
+    from pochoir_viewer.io import find_response
+
+    block = domain_block(load_response(find_response(REFERENCE_ROOT)), 100)
+    return np.abs(block).max(axis=2)
+
+
+@needs_reference
+def test_the_quoted_near_pad_peak_matches_the_data():
+    # "A path near the pad it lands on peaks around 1.8e-3".
+    peaks = reference_peaks()
+    near = peaks[:5, :5]
+
+    assert 1.5e-3 < near.min() and near.max() < 2.5e-3, (
+        f"the near-pad quarter peaks at {near.min():.2e}..{near.max():.2e}, "
+        "not around 1.8e-3"
     )
+
+
+@needs_reference
+def test_the_quoted_far_peak_matches_the_data():
+    # "one several cells away around 5e-5". The far quarter tops out at
+    # 4.96e-5 at (5, 5), so the quoted figure is its upper end.
+    peaks = reference_peaks()
+    far = peaks[5:, 5:]
+
+    assert far.max() < 6e-5 and far.min() > 2e-5, (
+        f"the far quarter peaks at {far.min():.2e}..{far.max():.2e}, not around 5e-5"
+    )
+
+
+@needs_reference
+def test_the_two_quoted_figures_really_do_differ_by_orders_of_magnitude():
+    # The claim the warning rests on: "may differ by orders of magnitude",
+    # while both are drawn the same height.
+    peaks = reference_peaks()
+
+    ratio = peaks.max() / peaks.min()
+    assert ratio > 50, f"the widest peak ratio is only {ratio:.0f}x"
 
 
 def test_the_single_tick_counter_is_documented():
