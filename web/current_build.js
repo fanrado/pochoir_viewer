@@ -6,9 +6,6 @@
  * WebGL context. Everything that touches a canvas lives in the drawing step.
  */
 
-/** Reciprocity offset between neighbouring pixel quarters. Mirrors PIXEL_OFFSET. */
-export const PIXEL_OFFSET = 5;
-
 /**
  * Fetch `current.json` and its binary, returning ``{meta, block}``.
  *
@@ -55,68 +52,22 @@ export function traceAt({ meta, block }, i, j) {
   return block.subarray(start, start + t);
 }
 
-/**
- * Index of `k`'s partner in the other quarter along one axis.
- *
- * Mirrors about the quarter boundary rather than always adding `half`: always
- * adding runs off the end of the block for any `k >= half`, which is why three
- * quarters of the domain used to throw. Same rule as `partner_index` in
- * pochoir_viewer/current.py.
- */
-export function partnerIndex(k, half) {
-  return k < half ? k + half : k - half;
-}
-
-/**
- * The four in-block partner traces for the path starting at `(i, j)`.
- *
- * Browser-side mirror of `pixel_traces` in pochoir_viewer/current.py and it
- * must stay in step with it. Returns an ordered array of
- * `{index: [a, b], trace}` for the partners `(i, j)`, `(px, j)`, `(i, py)`,
- * `(px, py)`, with `half` taken from the payload shape rather than hardcoded.
- *
- * KEYED BY BLOCK INDEX, DELIBERATELY. Names like `central` / `neighbor_x`
- * assert which pad collects the charge, and that claim rotates with the
- * quarter — it holds for the starts in the first quarter and is wrong for the
- * rest, filing their collection trace under an induction heading. A
- * mislabelled plot still looks plausible, so the caller does the labelling
- * from the index pair.
- *
- * Every `(i, j)` inside the block is valid; only out-of-block indices throw.
- */
-export function tracesForPath(data, i, j) {
-  const [rows, cols] = data.meta.shape;
-  if (!(i >= 0 && i < rows && j >= 0 && j < cols)) {
-    throw new RangeError(
-      `start (${i}, ${j}) is outside the ${rows}x${cols} block`,
-    );
-  }
-
-  const px = partnerIndex(i, Math.floor(rows / 2));
-  const py = partnerIndex(j, Math.floor(cols / 2));
-  return [
-    [i, j],
-    [px, j],
-    [i, py],
-    [px, py],
-  ].map(([a, b]) => ({ index: [a, b], trace: traceAt(data, a, b) }));
-}
-
 /** Time in microseconds at `tick`. The payload records the step; never guess it. */
 export function tickToUs(tick, meta) {
   return tick * meta.time_step_us;
 }
 
 /**
- * Symmetric peak magnitude over `traces`, for a SHARED vertical scale.
+ * Symmetric peak magnitude over `traces`, an iterable of numeric traces.
  *
- * The four panels must share one scale or the comparison they exist to support
- * is meaningless: the diagonal neighbour peaks ~50x below the central pixel,
- * and autoscaling each panel would draw both as the same size wiggle. Symmetric
- * about zero because induced current changes sign.
+ * Called PER PANEL: each slot holds an unrelated path, so each scales to its
+ * own trace and prints that peak in its title. An earlier design shared one
+ * scale across all four, which suited panels showing one path's neighbours but
+ * would now flatten whichever selected path happens to be smaller.
  *
- * Returns 0 for an all-zero input; callers must treat that as "nothing to
- * scale" rather than dividing by it.
+ * Symmetric about zero because induced current changes sign. Returns 0 for an
+ * all-zero input; callers must treat that as "nothing to scale" rather than
+ * dividing by it.
  */
 export function peakMagnitude(traces) {
   let peak = 0;
