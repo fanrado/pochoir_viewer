@@ -218,18 +218,46 @@ def test_the_stated_ratio_follows_from_the_two_numbers():
 # --- the claims about the view's behaviour ------------------------------------
 
 
-def test_the_shared_scale_is_documented_with_its_reason():
-    body = section()
+def test_the_panels_section_describes_what_the_panels_now_show():
+    # 7c529b6 changed what a panel IS: panel n is selection slot n, showing the
+    # nth selected path's own trace. The section still describes the previous
+    # design -- four pad-role panels for ONE path, sharing one vertical scale.
+    stale = [
+        phrase
+        for phrase in (
+            "share one vertical scale",
+            "The **central** pixel and the **diagonal** neighbour",
+            "every panel draws four curves",
+        )
+        if phrase in flat()
+    ]
 
-    assert "share one vertical scale" in flat()
-    assert "fifty times below" in flat()
-    assert "autoscaling" in flat()
+    assert stale == [], (
+        "the README still describes the pre-7c529b6 panels:\n" + "\n".join(stale)
+    )
 
 
 def test_the_shared_scale_claim_matches_the_code():
-    # One peak taken across every panel, in sharedPeak.
-    assert "function sharedPeak()" in view_js
-    assert "peakMagnitude" in view_js
+    # The claim and the code have to agree whichever way this is resolved.
+    documented = "share one vertical scale" in flat()
+    implemented = "function sharedPeak()" in view_js
+
+    assert documented == implemented, (
+        f"README documents a shared scale ({documented}) but the code "
+        f"{'has' if implemented else 'does not have'} one"
+    )
+
+
+def test_the_per_panel_peak_is_documented_if_the_scales_differ():
+    # With per-panel autoscale the title's peak is the ONLY thing making the
+    # four comparable, so it has to be documented.
+    if "function sharedPeak()" in view_js:
+        return
+
+    assert "peak" in flat().lower(), (
+        "each panel autoscales now, but the section does not mention the "
+        "per-panel peak that makes them comparable"
+    )
 
 
 def test_the_single_tick_counter_is_documented():

@@ -1,12 +1,16 @@
-// Tests for web/current_view.js — the four induced-current panels (c6f8be4).
+// Tests for web/current_view.js — the four induced-current panels.
 //
-// The drawing is checked through a recording 2-D context rather than by
-// eyeballing pixels: what matters is not how the curve looks but that all four
-// panels used ONE vertical scale. The module's own comment says why -- the
-// diagonal neighbour peaks ~50x below the central pixel, so autoscaling each
-// panel would draw both as the same size wiggle and destroy the amplitude
-// comparison the view exists for. That is the property with teeth here, and a
-// per-panel autoscale would look perfectly fine on screen.
+// 7c529b6 changed what a panel IS. They used to show one path's four mirrored
+// partners; now panel n is SELECTION SLOT n, showing the nth selected path's
+// own fr[i, j, :] and nothing else. Select one path and only the first panel
+// has content.
+//
+// That reverses the earlier shared-scale design, deliberately: the slots hold
+// unrelated paths now, so one scale would flatten whichever is smaller for no
+// reason. Each panel autoscales to its own trace and reports its peak in the
+// title, which is the ONLY thing making the four comparable — so that is
+// tested hard. The drawing is checked through a recording 2-D context, since
+// what matters is what was drawn, not how it looks.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -14,10 +18,11 @@ import assert from "node:assert/strict";
 import {
   PANELS,
   PATH_COLORS,
+  SLOT_COUNT,
   createCurrentView,
   pathColor,
 } from "../../web/current_view.js";
-import { PIXEL_OFFSET, tracesForPath } from "../../web/current_build.js";
+import { traceAt } from "../../web/current_build.js";
 
 const M = 10;
 const T = 4;
@@ -76,17 +81,15 @@ function fakeDoc(extra = {}) {
 }
 
 /**
- * A payload where the four pixels have wildly different amplitudes, as the
- * real one does. Cell (i, j) is a constant run at `amplitude(i, j)`.
+ * A payload where amplitude varies wildly per cell, as the real one does:
+ * cell (i, j) peaks at 10^-(i+j). Bipolar, like a real induced trace.
  */
 function payload({ m = M, t = T } = {}) {
   const block = new Float32Array(m * m * t);
-  const amp = (i, j) => (i >= PIXEL_OFFSET ? 0.02 : 1) * (j >= PIXEL_OFFSET ? 0.02 : 1);
   for (let i = 0; i < m; i++) {
     for (let j = 0; j < m; j++) {
       for (let k = 0; k < t; k++) {
-        // Alternating sign so the traces are bipolar, like the real ones.
-        block[(i * m + j) * t + k] = amp(i, j) * (k % 2 === 0 ? 1 : -1);
+        block[(i * m + j) * t + k] = Math.pow(10, -(i + j)) * (k % 2 === 0 ? 1 : -1);
       }
     }
   }
@@ -99,23 +102,22 @@ function payload({ m = M, t = T } = {}) {
 const ops = (doc, id) => doc.els[id].ctx.ops;
 const strokes = (doc, id) =>
   ops(doc, id).filter(([op]) => op === "lineTo" || op === "moveTo");
-
-/** Only the path curves: the zero line and the cursor have their own colours. */
 const curves = (doc, id) =>
   strokes(doc, id).filter(([, , , color]) => PATH_COLORS.includes(color));
-
-/** The cursor is identified by its colour, not its geometry -- a sample at
- *  the shared peak also lands on y = 0. */
 const CURSOR_COLOR = "#a05000";
 const cursorOps = (doc, id) =>
   strokes(doc, id).filter(([, , , color]) => color === CURSOR_COLOR);
+const texts = (doc, id) =>
+  ops(doc, id).filter(([op]) => op === "fillText").map(([, t]) => t);
+const titleOf = (doc, id) => texts(doc, id)[0];
 
-/** Drop everything recorded so far, so a test reads one draw in isolation. */
 function reset(doc) {
   for (const panel of PANELS) doc.els[panel.id].ctx.ops.length = 0;
 }
 
-// --- construction ------------------------------------------------------------
+const SLOTS = PANELS.map((p) => p.id);
+
+// --- construction --------------------------------------------------------------
 
 test("a missing document is refused by name", () => {
   for (const bad of [undefined, null, {}, { getElementById: "nope" }]) {
@@ -124,17 +126,14 @@ test("a missing document is refused by name", () => {
 });
 
 test("wiring alone draws nothing", () => {
-  // The caller drives the first draw once a selection exists; an empty
-  // selection must not paint a misleading flat line unprompted.
   const doc = fakeDoc();
 
   createCurrentView(payload(), doc);
 
-  assert.deepEqual(ops(doc, "current-central"), []);
+  assert.deepEqual(ops(doc, SLOTS[0]), []);
 });
 
 test("missing canvases do not break the view", () => {
-  // The panel is absent until the payload loads.
   const doc = { getElementById: () => null, createElement: fakeElement, createTextNode: (t) => ({ t }) };
 
   const view = createCurrentView(payload(), doc);
@@ -142,131 +141,226 @@ test("missing canvases do not break the view", () => {
   assert.doesNotThrow(() => view.setSelection([{ i: 0, j: 0 }]));
 });
 
-test("the panels are addressed positionally, not by pad role", () => {
-  // 8fa1ddb drops key and title from PANELS: panel n takes entry n of
-  // tracesForPath's fixed order. Reintroducing a role name here is the
-  // mislabelling of pochoir_viewer-154c coming back.
-  assert.deepEqual(
-    PANELS.map((p) => p.id),
-    ["current-central", "current-neighbor-x", "current-neighbor-y", "current-diagonal"],
-  );
-  for (const panel of PANELS) {
-    assert.equal("key" in panel, false, `${panel.id} still carries a role key`);
-    assert.equal("title" in panel, false, `${panel.id} still carries a fixed title`);
+test("there is one slot per panel", () => {
+  assert.equal(SLOT_COUNT, PANELS.length);
+  assert.equal(SLOT_COUNT, 4);
+});
+
+test("the panel ids still match the markup", () => {
+  // The ids keep their original pad-role names; only index.html depends on
+  // them, and nothing in the drawing does.
+  assert.deepEqual(SLOTS, [
+    "current-central", "current-neighbor-x", "current-neighbor-y", "current-diagonal",
+  ]);
+});
+
+// --- panel n is selection slot n ----------------------------------------------
+
+test("one selected path fills only the first panel", () => {
+  // The change this commit is about: four filled panels from a single click
+  // invited the reading that four paths were selected.
+  const doc = fakeDoc();
+
+  createCurrentView(payload(), doc).setSelection([{ i: 2, j: 3 }]);
+
+  assert.ok(curves(doc, SLOTS[0]).length > 0, "the first panel is empty");
+  for (const id of SLOTS.slice(1)) {
+    assert.deepEqual(curves(doc, id), [], `${id} drew something`);
   }
 });
 
-// --- the shared vertical scale ----------------------------------------------
-
-test("all four panels draw against one shared scale", () => {
-  // The property with teeth. With the central pixel 2500x the diagonal, a
-  // per-panel autoscale would give both curves the same excursion; a shared
-  // scale must leave the diagonal nearly flat.
+test("each panel shows its own slot's path", () => {
   const doc = fakeDoc();
-  const view = createCurrentView(payload(), doc);
+  const picks = [{ i: 0, j: 0 }, { i: 1, j: 1 }, { i: 2, j: 2 }, { i: 3, j: 3 }];
 
-  view.setSelection([{ i: 0, j: 0 }]);
+  createCurrentView(payload(), doc).setSelection(picks);
 
-  const excursion = (id) => {
-    const ys = strokes(doc, id).map(([, , y]) => y);
-    return Math.max(...ys) - Math.min(...ys);
-  };
-  assert.ok(excursion("current-central") > 50, "the central curve is flat");
-  assert.ok(
-    excursion("current-diagonal") < excursion("current-central") / 100,
-    "the diagonal was autoscaled up to match the central pixel",
-  );
+  picks.forEach((pick, n) => {
+    assert.match(titleOf(doc, SLOTS[n]), new RegExp(`\\(${pick.i}, ${pick.j}\\)`), SLOTS[n]);
+  });
 });
 
-test("the shared peak spans every selected path, not just the first", () => {
-  // Selecting a larger path must rescale the panels already drawn for a
-  // smaller one, or the two curves cannot be compared.
+test("no panel shows a path that was not selected", () => {
+  // No inferred neighbours: every title must name a selected path.
   const doc = fakeDoc();
-  const view = createCurrentView(payload(), doc);
+  const picks = [{ i: 2, j: 3 }, { i: 7, j: 8 }];
 
-  view.setSelection([{ i: 0, j: 0 }]);
-  const alone = curves(doc, "current-central").map(([, , y]) => y);
-  reset(doc);
-  view.setSelection([{ i: 0, j: 0 }, { i: 1, j: 1 }]);
-  const together = curves(doc, "current-central")
-    .filter(([, , , color]) => color === pathColor(0))
-    .map(([, , y]) => y);
+  createCurrentView(payload(), doc).setSelection(picks);
 
-  assert.deepEqual(together, alone, "identical amplitudes were rescaled anyway");
+  const named = SLOTS.map((id) => titleOf(doc, id)).filter(Boolean);
+  assert.equal(named.length, 2);
+  assert.match(named[0], /\(2, 3\)/);
+  assert.match(named[1], /\(7, 8\)/);
 });
 
-test("an all-zero selection draws a flat line rather than NaN", () => {
+test("a panel draws the trace traceAt gives for its cell", () => {
+  // The values, not just the label: a panel titled (2, 3) showing another
+  // cell's trace is the mislabelling of pochoir_viewer-154c in a new form.
   const data = payload();
-  data.block.fill(0);
   const doc = fakeDoc();
 
-  createCurrentView(data, doc).setSelection([{ i: 0, j: 0 }]);
+  createCurrentView(data, doc).setSelection([{ i: 2, j: 3 }]);
 
-  for (const [, , y] of strokes(doc, "current-central")) {
-    assert.ok(Number.isFinite(y), `y is ${y}`);
-  }
+  const drawn = curves(doc, SLOTS[0]).length;
+  assert.equal(drawn, traceAt(data, 2, 3).length);
 });
 
-// --- one curve per selected path --------------------------------------------
+// --- an unfilled slot is completely blank -------------------------------------
 
-test("every panel draws one curve per selected path", () => {
-  // "four selected paths put sixteen curves on screen".
-  const doc = fakeDoc();
-  const view = createCurrentView(payload(), doc);
-
-  view.setSelection([{ i: 0, j: 0 }, { i: 1, j: 1 }, { i: 2, j: 2 }]);
-
-  for (const panel of PANELS) {
-    const drawn = new Set(curves(doc, panel.id).map(([, , , color]) => color));
-    assert.equal(drawn.size, 3, `${panel.id} drew ${drawn.size} curves`);
-  }
-});
-
-test("each curve has one point per tick", () => {
+test("an unfilled slot draws nothing at all", () => {
+  // "no curve, no title, no axes ghost": anything drawn would imply a path
+  // that is not selected.
   const doc = fakeDoc();
 
   createCurrentView(payload(), doc).setSelection([{ i: 0, j: 0 }]);
 
-  const curve = curves(doc, "current-central").filter(
-    ([, , , color]) => color === pathColor(0),
-  );
-  assert.equal(curve.length, T);
+  for (const id of SLOTS.slice(1)) {
+    const after = ops(doc, id).filter(([op]) => op !== "clearRect");
+    assert.deepEqual(after, [], `${id} drew ${after.length} ops`);
+  }
 });
 
-test("a curve starts with moveTo and continues with lineTo", () => {
+test("an unfilled slot has no zero line", () => {
+  // The baseline is drawn after the empty check, so a blank panel is truly
+  // blank rather than an empty axis.
   const doc = fakeDoc();
 
   createCurrentView(payload(), doc).setSelection([{ i: 0, j: 0 }]);
 
-  const curve = curves(doc, "current-central").filter(
-    ([, , , color]) => color === pathColor(0),
-  );
-  assert.equal(curve[0][0], "moveTo");
-  assert.ok(curve.slice(1).every(([op]) => op === "lineTo"));
+  assert.deepEqual(strokes(doc, SLOTS[3]), []);
 });
 
-test("selecting nothing clears the panels rather than leaving stale curves", () => {
+test("shrinking the selection clears the panels it vacated", () => {
   const doc = fakeDoc();
   const view = createCurrentView(payload(), doc);
+  view.setSelection([{ i: 0, j: 0 }, { i: 1, j: 1 }]);
+
+  reset(doc);
   view.setSelection([{ i: 0, j: 0 }]);
+
+  assert.deepEqual(curves(doc, SLOTS[1]), [], "the vacated panel kept its curve");
+  assert.equal(titleOf(doc, SLOTS[1]), undefined, "the vacated panel kept its title");
+});
+
+test("clearing the selection blanks every panel", () => {
+  const doc = fakeDoc();
+  const view = createCurrentView(payload(), doc);
+  view.setSelection([{ i: 0, j: 0 }, { i: 1, j: 1 }]);
 
   reset(doc);
   view.setSelection([]);
 
-  assert.deepEqual(curves(doc, "current-central"), [], "a path curve survived the deselection");
+  for (const id of SLOTS) {
+    assert.deepEqual(ops(doc, id).filter(([op]) => op !== "clearRect"), [], id);
+  }
 });
 
-test("each panel is cleared before it is redrawn", () => {
+test("every panel is cleared before it is redrawn", () => {
   const doc = fakeDoc();
   const view = createCurrentView(payload(), doc);
 
   view.setSelection([{ i: 0, j: 0 }]);
   view.setSelection([{ i: 1, j: 1 }]);
 
-  assert.equal(ops(doc, "current-central").filter(([op]) => op === "clearRect").length, 2);
+  assert.equal(ops(doc, SLOTS[0]).filter(([op]) => op === "clearRect").length, 2);
 });
 
-// --- colours -----------------------------------------------------------------
+// --- the slot cap ---------------------------------------------------------------
+
+test("a selection longer than the slots is truncated, not wrapped", () => {
+  const doc = fakeDoc();
+  const picks = Array.from({ length: 7 }, (_, n) => ({ i: n, j: 0 }));
+
+  createCurrentView(payload(), doc).setSelection(picks);
+
+  SLOTS.forEach((id, n) => {
+    assert.match(titleOf(doc, id), new RegExp(`\\(${n}, 0\\)`), id);
+  });
+});
+
+test("the fifth selected path is dropped rather than overwriting a panel", () => {
+  const doc = fakeDoc();
+
+  createCurrentView(payload(), doc).setSelection(
+    Array.from({ length: 6 }, (_, n) => ({ i: n, j: 0 })),
+  );
+
+  const titles = SLOTS.map((id) => titleOf(doc, id));
+  assert.equal(titles.filter(Boolean).length, SLOT_COUNT);
+  assert.equal(titles.some((t) => /\(4, 0\)|\(5, 0\)/.test(t)), false);
+});
+
+// --- per-panel autoscale --------------------------------------------------------
+
+test("each panel autoscales to its own trace", () => {
+  // The reversal: slots hold unrelated paths, so a shared scale would flatten
+  // whichever is smaller for no reason. With (0,0) at 1 and (4,4) at 1e-8,
+  // both curves must still span their panel.
+  const doc = fakeDoc();
+
+  createCurrentView(payload(), doc).setSelection([{ i: 0, j: 0 }, { i: 4, j: 4 }]);
+
+  const span = (id) => {
+    const ys = curves(doc, id).map(([, , y]) => y);
+    return Math.max(...ys) - Math.min(...ys);
+  };
+  assert.ok(span(SLOTS[0]) > 50, "the large trace is flat");
+  assert.ok(span(SLOTS[1]) > 50, "the tiny trace was flattened by a shared scale");
+});
+
+test("the peak is reported in the title, since the scales differ", () => {
+  // This is the ONLY thing making the four panels comparable now. Without it
+  // the autoscale would be actively misleading.
+  const doc = fakeDoc();
+
+  createCurrentView(payload(), doc).setSelection([{ i: 0, j: 0 }, { i: 4, j: 4 }]);
+
+  assert.match(titleOf(doc, SLOTS[0]), /peak 1\.00e\+0/);
+  assert.match(titleOf(doc, SLOTS[1]), /peak 1\.00e-8/);
+});
+
+test("two panels with the same peak scale identically", () => {
+  const doc = fakeDoc();
+
+  createCurrentView(payload(), doc).setSelection([{ i: 1, j: 3 }, { i: 3, j: 1 }]);
+
+  const ys = (id) => curves(doc, id).map(([, , y]) => y);
+  assert.deepEqual(ys(SLOTS[0]), ys(SLOTS[1]));
+});
+
+test("an all-zero trace draws a flat line rather than NaN", () => {
+  const data = payload();
+  data.block.fill(0);
+  const doc = fakeDoc();
+
+  createCurrentView(data, doc).setSelection([{ i: 0, j: 0 }]);
+
+  for (const [, , y] of curves(doc, SLOTS[0])) {
+    assert.ok(Number.isFinite(y), `y is ${y}`);
+  }
+});
+
+// --- colours and the legend -----------------------------------------------------
+
+test("a panel's curve takes its slot's colour", () => {
+  const doc = fakeDoc();
+
+  createCurrentView(payload(), doc).setSelection([
+    { i: 0, j: 0 }, { i: 1, j: 1 }, { i: 2, j: 2 }, { i: 3, j: 3 },
+  ]);
+
+  SLOTS.forEach((id, n) => {
+    const colors = new Set(curves(doc, id).map(([, , , c]) => c));
+    assert.deepEqual([...colors], [pathColor(n)], id);
+  });
+});
+
+test("the colours are distinct across the four slots", () => {
+  // With one curve per panel the colour is the link to the legend row.
+  const used = new Set(Array.from({ length: SLOT_COUNT }, (_, n) => pathColor(n)));
+
+  assert.equal(used.size, SLOT_COUNT);
+});
 
 test("the nth path takes the nth colour", () => {
   for (let n = 0; n < PATH_COLORS.length; n++) {
@@ -275,193 +369,15 @@ test("the nth path takes the nth colour", () => {
 });
 
 test("the colour cycle repeats past the end of the list", () => {
-  // The selector allows more paths than there are colours; the legend is the
-  // authority, so repeating is intended rather than a bug.
   assert.equal(pathColor(PATH_COLORS.length), PATH_COLORS[0]);
-  assert.equal(pathColor(PATH_COLORS.length + 2), PATH_COLORS[2]);
 });
-
-test("the colours are distinct from each other", () => {
-  assert.equal(new Set(PATH_COLORS).size, PATH_COLORS.length);
-});
-
-test("the same path gets the same colour in all four panels", () => {
-  // Cross-panel comparison depends on it.
-  const doc = fakeDoc();
-
-  createCurrentView(payload(), doc).setSelection([{ i: 0, j: 0 }, { i: 1, j: 1 }]);
-
-  for (const panel of PANELS) {
-    const colors = [...new Set(strokes(doc, panel.id).map(([, , , c]) => c))].filter((c) =>
-      PATH_COLORS.includes(c),
-    );
-    assert.deepEqual(colors, [pathColor(0), pathColor(1)], panel.id);
-  }
-});
-
-// --- the zero line and the labels -------------------------------------------
-
-test("every panel draws a zero line at mid-height", () => {
-  const doc = fakeDoc();
-
-  createCurrentView(payload(), doc).setSelection([]);
-
-  for (const panel of PANELS) {
-    const baseline = ops(doc, panel.id).find(
-      ([op, , y]) => op === "moveTo" && y === 30,
-    );
-    assert.ok(baseline, `${panel.id} has no zero line`);
-  }
-});
-
-const titleOf = (doc, id) =>
-  ops(doc, id).filter(([op]) => op === "fillText").map(([, t]) => t)[0];
-
-test("each panel is titled with the block index it draws", () => {
-  // The four partners of (2, 3) are (2,3), (7,3), (2,8), (7,8) in order.
-  const doc = fakeDoc();
-
-  createCurrentView(payload(), doc).setSelection([{ i: 2, j: 3 }]);
-
-  assert.deepEqual(
-    PANELS.map((p) => titleOf(doc, p.id)),
-    ["[2, 3] (start)", "[7, 3]", "[2, 8]", "[7, 8]"],
-  );
-});
-
-test("the start's own panel is marked without claiming it collects", () => {
-  // "(start)" says which cell the electron is in; it must NOT say "central",
-  // which would assert which pad picks up the charge -- the claim that was
-  // wrong for three quarters of the domain.
-  const doc = fakeDoc();
-
-  createCurrentView(payload(), doc).setSelection([{ i: 7, j: 3 }]);
-
-  const titles = PANELS.map((p) => titleOf(doc, p.id));
-  assert.equal(titles[0], "[7, 3] (start)");
-  assert.equal(titles.filter((t) => t?.includes("(start)")).length, 1);
-  for (const t of titles) {
-    assert.equal(/central|neighbour|neighbor|diagonal/.test(t ?? ""), false, t);
-  }
-});
-
-test("the title follows the quarter the start is in", () => {
-  // Same panel, different quarter, different cell -- the titles have to move.
-  const first = fakeDoc();
-  const third = fakeDoc();
-  createCurrentView(payload(), first).setSelection([{ i: 2, j: 3 }]);
-  createCurrentView(payload(), third).setSelection([{ i: 7, j: 8 }]);
-
-  assert.equal(titleOf(first, "current-central"), "[2, 3] (start)");
-  assert.equal(titleOf(third, "current-central"), "[7, 8] (start)");
-});
-
-test("the time axis is labelled in physical units from the payload", () => {
-  // Never in ticks: the number alone would not say what it means.
-  const doc = fakeDoc();
-
-  createCurrentView(payload(), doc).setSelection([]);
-
-  const labels = ops(doc, "current-central").filter(([op]) => op === "fillText").map(([, t]) => t);
-  assert.ok(labels.some((t) => t === "0–0.3 us"), `labels were ${labels.join(" | ")}`);
-});
-
-test("the axis label follows the payload's own time step", () => {
-  const data = payload();
-  data.meta.time_step_us = 1;
-  const doc = fakeDoc();
-
-  createCurrentView(data, doc).setSelection([]);
-
-  const labels = ops(doc, "current-central").filter(([op]) => op === "fillText").map(([, t]) => t);
-  assert.ok(labels.some((t) => t === "0–3.0 us"), labels.join(" | "));
-});
-
-test("the unit comes from the payload rather than being hardcoded", () => {
-  const data = payload();
-  data.meta.time_units = "ns";
-  const doc = fakeDoc();
-
-  createCurrentView(data, doc).setSelection([]);
-
-  const labels = ops(doc, "current-central").filter(([op]) => op === "fillText").map(([, t]) => t);
-  assert.ok(labels.some((t) => t.endsWith("ns")), labels.join(" | "));
-});
-
-test("a payload with no time_units falls back to us", () => {
-  const data = payload();
-  delete data.meta.time_units;
-  const doc = fakeDoc();
-
-  createCurrentView(data, doc).setSelection([]);
-
-  const labels = ops(doc, "current-central").filter(([op]) => op === "fillText").map(([, t]) => t);
-  assert.ok(labels.some((t) => t.endsWith("us")), labels.join(" | "));
-});
-
-// --- the time cursor ----------------------------------------------------------
-
-test("the cursor draws a full-height line in every panel", () => {
-  const doc = fakeDoc();
-  const view = createCurrentView(payload(), doc);
-  view.setSelection([{ i: 0, j: 0 }]);
-
-  view.setCursor(0);
-
-  for (const panel of PANELS) {
-    const line = cursorOps(doc, panel.id);
-    assert.deepEqual(
-      line.map(([op, , y]) => [op, y]),
-      [["moveTo", 0], ["lineTo", 60]],
-      `${panel.id} has no full-height cursor line`,
-    );
-  }
-});
-
-test("the cursor sits at the same x in all four panels", () => {
-  // It marks one instant across the four pixels; a per-panel offset would
-  // make the comparison lie.
-  const doc = fakeDoc();
-  const view = createCurrentView(payload(), doc);
-  view.setSelection([{ i: 0, j: 0 }]);
-
-  reset(doc);
-  view.setCursor(2);
-
-  const xs = PANELS.map((panel) => cursorOps(doc, panel.id)[0]?.[1]);
-  assert.equal(new Set(xs).size, 1, `cursor x differed: ${xs.join(", ")}`);
-  assert.ok(xs[0] > 0);
-});
-
-test("the cursor survives a selection change", () => {
-  const doc = fakeDoc();
-  const view = createCurrentView(payload(), doc);
-  view.setCursor(1);
-
-  reset(doc);
-  view.setSelection([{ i: 0, j: 0 }]);
-
-  assert.ok(cursorOps(doc, "current-central").length > 0, "the cursor was dropped when the selection changed");
-});
-
-test("no cursor is drawn before one is set", () => {
-  const doc = fakeDoc();
-
-  createCurrentView(payload(), doc).setSelection([{ i: 0, j: 0 }]);
-
-  assert.deepEqual(cursorOps(doc, "current-central"), []);
-});
-
-// --- the legend ---------------------------------------------------------------
 
 test("the legend keys each colour to its start position", () => {
-  // Nothing else on screen can say which curve is which path.
   const doc = fakeDoc();
 
   createCurrentView(payload(), doc).setSelection([{ i: 0, j: 0 }, { i: 2, j: 3 }]);
 
-  const legend = doc.els["current-legend"];
-  assert.equal(legend.children.length, 2);
+  assert.equal(doc.els["current-legend"].children.length, 2);
 });
 
 test("the legend is rebuilt, not appended to", () => {
@@ -483,20 +399,118 @@ test("a missing legend element does not break drawing", () => {
   assert.doesNotThrow(() => view.setSelection([{ i: 0, j: 0 }]));
 });
 
-// --- the canvas backing store -------------------------------------------------
+// --- the time axis and the cursor -----------------------------------------------
 
-test("the backing store is matched to the CSS box", () => {
-  // Otherwise the browser scales a stale bitmap and every line is blurred.
+test("the time axis is labelled in physical units from the payload", () => {
   const doc = fakeDoc();
 
-  createCurrentView(payload(), doc).setSelection([]);
+  createCurrentView(payload(), doc).setSelection([{ i: 0, j: 0 }]);
 
-  const canvas = doc.els["current-central"];
+  assert.ok(texts(doc, SLOTS[0]).includes("0–0.3 us"), texts(doc, SLOTS[0]).join(" | "));
+});
+
+test("the axis label follows the payload's own time step", () => {
+  const data = payload();
+  data.meta.time_step_us = 1;
+  const doc = fakeDoc();
+
+  createCurrentView(data, doc).setSelection([{ i: 0, j: 0 }]);
+
+  assert.ok(texts(doc, SLOTS[0]).includes("0–3.0 us"));
+});
+
+test("the unit comes from the payload rather than being hardcoded", () => {
+  const data = payload();
+  data.meta.time_units = "ns";
+  const doc = fakeDoc();
+
+  createCurrentView(data, doc).setSelection([{ i: 0, j: 0 }]);
+
+  assert.ok(texts(doc, SLOTS[0]).some((t) => t.endsWith("ns")));
+});
+
+test("a payload with no time_units falls back to us", () => {
+  const data = payload();
+  delete data.meta.time_units;
+  const doc = fakeDoc();
+
+  createCurrentView(data, doc).setSelection([{ i: 0, j: 0 }]);
+
+  assert.ok(texts(doc, SLOTS[0]).some((t) => t.endsWith("us")));
+});
+
+test("the cursor draws a full-height line in every filled panel", () => {
+  const doc = fakeDoc();
+  const view = createCurrentView(payload(), doc);
+  view.setSelection([{ i: 0, j: 0 }, { i: 1, j: 1 }]);
+
+  reset(doc);
+  view.setCursor(0);
+
+  for (const id of SLOTS.slice(0, 2)) {
+    assert.deepEqual(
+      cursorOps(doc, id).map(([op, , y]) => [op, y]),
+      [["moveTo", 0], ["lineTo", 60]],
+      id,
+    );
+  }
+});
+
+test("the cursor sits at the same x in every filled panel", () => {
+  // It marks one instant across the selected paths; a per-panel offset would
+  // make the comparison lie.
+  const doc = fakeDoc();
+  const view = createCurrentView(payload(), doc);
+  view.setSelection([{ i: 0, j: 0 }, { i: 1, j: 1 }]);
+
+  reset(doc);
+  view.setCursor(2);
+
+  const xs = SLOTS.slice(0, 2).map((id) => cursorOps(doc, id)[0]?.[1]);
+  assert.equal(new Set(xs).size, 1, `cursor x differed: ${xs.join(", ")}`);
+  assert.ok(xs[0] > 0);
+});
+
+test("an empty slot gets no cursor either", () => {
+  const doc = fakeDoc();
+  const view = createCurrentView(payload(), doc);
+  view.setSelection([{ i: 0, j: 0 }]);
+
+  view.setCursor(2);
+
+  assert.deepEqual(cursorOps(doc, SLOTS[3]), []);
+});
+
+test("the cursor survives a selection change", () => {
+  const doc = fakeDoc();
+  const view = createCurrentView(payload(), doc);
+  view.setCursor(1);
+
+  reset(doc);
+  view.setSelection([{ i: 0, j: 0 }]);
+
+  assert.ok(cursorOps(doc, SLOTS[0]).length > 0, "the cursor was dropped");
+});
+
+test("no cursor is drawn before one is set", () => {
+  const doc = fakeDoc();
+
+  createCurrentView(payload(), doc).setSelection([{ i: 0, j: 0 }]);
+
+  assert.deepEqual(cursorOps(doc, SLOTS[0]), []);
+});
+
+// --- the canvas and the selection copy -------------------------------------------
+
+test("the backing store is matched to the CSS box", () => {
+  const doc = fakeDoc();
+
+  createCurrentView(payload(), doc).setSelection([{ i: 0, j: 0 }]);
+
+  const canvas = doc.els[SLOTS[0]];
   assert.equal(canvas.width, canvas.clientWidth);
   assert.equal(canvas.height, canvas.clientHeight);
 });
-
-// --- selection is copied, not aliased -----------------------------------------
 
 test("the selection is copied so a caller's later mutation does not leak in", () => {
   const doc = fakeDoc();
@@ -505,94 +519,17 @@ test("the selection is copied so a caller's later mutation does not leak in", ()
 
   view.setSelection(selection);
   selection.push({ i: 1, j: 1 });
+  reset(doc);
   view.draw();
 
-  const drawn = new Set(
-    strokes(doc, "current-central").map(([, , , c]) => c).filter((c) => PATH_COLORS.includes(c)),
-  );
-  assert.equal(drawn.size, 1, "a post-hoc push to the caller's array was drawn");
+  assert.deepEqual(curves(doc, SLOTS[1]), [], "a post-hoc push was drawn");
 });
 
-test("a start anywhere in the block can now be selected", () => {
-  // 94799a9 and fc45c69 opened every quarter; only off-block indices throw.
+test("a start anywhere in the block can be selected", () => {
   const doc = fakeDoc();
   const view = createCurrentView(payload(), doc);
 
   for (const [i, j] of [[7, 0], [0, 7], [9, 9], [5, 5]]) {
     assert.doesNotThrow(() => view.setSelection([{ i, j }]), `(${i}, ${j})`);
-  }
-  assert.throws(() => view.setSelection([{ i: 10, j: 0 }]), /outside the/);
-});
-
-// --- one panel, two quarters --------------------------------------------------
-//
-// Panel n draws entry n for EVERY selected path, and entry n is a different
-// block cell depending on which quarter the start is in. So selecting two
-// starts from different quarters of the same group overlays two different
-// cells in one panel, under a title naming only the first. drawPanel's comment
-// acknowledges the title limitation; these pin what actually happens, because
-// the consequence is stronger than a title being approximate -- the two curves
-// are different physical quantities on one axis.
-
-test("panel 0 draws a different cell for each quarter's start", () => {
-  // (2,3) and (7,3) are partners: entry 0 is (2,3) for the first and (7,3)
-  // for the second. Both land in panel 0.
-  const data = payload();
-
-  const a = tracesForPath(data, 2, 3)[0].index.join(",");
-  const b = tracesForPath(data, 7, 3)[0].index.join(",");
-
-  assert.notEqual(a, b, "the two starts share entry 0, so there is nothing to overlay");
-  assert.equal(a, "2,3");
-  assert.equal(b, "7,3");
-});
-
-test("selecting both puts two different cells in the same panel", () => {
-  const doc = fakeDoc();
-  const view = createCurrentView(payload(), doc);
-
-  view.setSelection([{ i: 2, j: 3 }, { i: 7, j: 3 }]);
-
-  // Cell values are the a*100+b labels, so the two curves are identifiable.
-  const drawn = new Set(
-    curves(doc, "current-central")
-      .filter(([op]) => op === "moveTo")
-      .map(([, , y]) => y),
-  );
-  assert.equal(drawn.size, 2, "the two starts drew the same cell");
-});
-
-test("the title names only the first selected start", () => {
-  // Acknowledged in drawPanel's comment. Pinned so it is a known limitation
-  // rather than a surprise: the legend's per-path colours are what
-  // disambiguate the second curve.
-  const doc = fakeDoc();
-
-  createCurrentView(payload(), doc).setSelection([{ i: 2, j: 3 }, { i: 7, j: 3 }]);
-
-  assert.equal(titleOf(doc, "current-central"), "[2, 3] (start)");
-});
-
-test("the legend still keys every selected start to its colour", () => {
-  // The only thing that lets a reader attribute the second curve.
-  const doc = fakeDoc();
-
-  createCurrentView(payload(), doc).setSelection([{ i: 2, j: 3 }, { i: 7, j: 3 }]);
-
-  assert.equal(doc.els["current-legend"].children.length, 2);
-});
-
-test("two starts in the same quarter share their panel cells", () => {
-  // The benign case, for contrast: both entry-0 cells are in the first
-  // quarter, so panel 0 compares like with like.
-  const data = payload();
-
-  assert.equal(tracesForPath(data, 1, 1)[0].index.join(","), "1,1");
-  assert.equal(tracesForPath(data, 2, 2)[0].index.join(","), "2,2");
-  for (const slot of [0, 1, 2, 3]) {
-    const a = tracesForPath(data, 1, 1)[slot].index;
-    const b = tracesForPath(data, 2, 2)[slot].index;
-    assert.equal(a[0] < 5 === b[0] < 5, true, `slot ${slot} straddles the boundary`);
-    assert.equal(a[1] < 5 === b[1] < 5, true, `slot ${slot} straddles the boundary`);
   }
 });
