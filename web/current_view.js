@@ -10,23 +10,21 @@ import {
   peakMagnitude,
   tickToUs,
   tickToX,
-  tracesForPath,
+  traceAt,
   valueToY,
 } from "./current_build.js";
 
 /**
- * Canvases in grid order, addressed POSITIONALLY.
+ * The four canvases, used as four SELECTION SLOTS.
  *
- * tracesForPath returns its four partners in a fixed order — (i, j), (px, j),
- * (i, py), (px, py) — so panel n takes entry n and each panel is titled from
- * its own entry's block index.
+ * Panel n shows the nth selected path and nothing else: its own fr[i, j, :]
+ * read with traceAt. Select one path and only the first panel has content; the
+ * other three are blank.
  *
- * Deliberately NOT keyed by pad role. Names like "central" assert which pad
- * collects the charge, and that claim rotates with the quarter: it is right
- * for a start in the first quarter and wrong for the other three, which is
- * exactly the mislabelling behind pochoir_viewer-154c. The layout still mirrors
- * pixel geometry — the two panels on each diagonal of the 2x2 are the two cells
- * diagonal from each other in the block.
+ * NO INFERRED NEIGHBOURS. These panels used to show one path's four mirrored
+ * partners, so selecting a single cell filled all four and invited the reading
+ * that four paths were selected. The ids still carry their original names; only
+ * the markup depends on those.
  */
 export const PANELS = [
   { id: "current-central" },
@@ -34,6 +32,9 @@ export const PANELS = [
   { id: "current-neighbor-y" },
   { id: "current-diagonal" },
 ];
+
+/** Slots available; the selection is rendered up to this many. */
+export const SLOT_COUNT = PANELS.length;
 
 /**
  * Curve colours, cycled by selection order.
@@ -94,25 +95,7 @@ export function createCurrentView(data, doc = globalThis.document) {
   let selection = [];
   let cursor = null;
 
-  /**
-   * All four panels share ONE vertical scale, taken across every selected
-   * path and every panel. Autoscaling per panel would draw the diagonal
-   * neighbour — which peaks ~50x below the central pixel — as the same size
-   * wiggle, destroying the amplitude comparison the view exists for.
-   */
-  function sharedPeak() {
-    let peak = 0;
-    for (const { i, j } of selection) {
-      // peakMagnitude takes an iterable of numeric traces; the entries carry
-      // an index alongside, so hand it the traces alone rather than changing
-      // its contract.
-      const p = peakMagnitude(tracesForPath(data, i, j).map((e) => e.trace));
-      if (p > peak) peak = p;
-    }
-    return peak;
-  }
-
-  function drawPanel({ canvas, slot }, peak) {
+  function drawPanel({ canvas, slot }) {
     if (!canvas) return;
     const ctx = canvas.getContext?.("2d");
     if (!ctx) return;
@@ -126,6 +109,20 @@ export function createCurrentView(data, doc = globalThis.document) {
 
     ctx.clearRect(0, 0, width, height);
 
+    // An unfilled slot is COMPLETELY blank: no curve, no title, no axes ghost,
+    // and no leftover from a previous selection. Anything drawn here would
+    // imply a path that is not selected, which is the bug this step fixes.
+    const pick = selection[slot];
+    if (!pick) return;
+
+    const { i, j } = pick;
+    const trace = traceAt(data, i, j);
+
+    // Each panel autoscales to ITS OWN trace. The slots hold unrelated paths
+    // now, so a shared scale would flatten whichever is smaller for no reason;
+    // the peak goes in the title so the scales stay comparable by eye.
+    const peak = peakMagnitude([trace]);
+
     // Zero line: induced current is signed, so the baseline is mid-height and
     // needs to be visible for the sign to read at all.
     const mid = height / 2;
@@ -136,29 +133,19 @@ export function createCurrentView(data, doc = globalThis.document) {
     ctx.lineTo(width, mid);
     ctx.stroke();
 
-    // Entry 0 is always the selected start's own cell. Titled from the first
-    // selected path: with several selected the partner sets differ, and the
-    // index shown is the one the leading curve belongs to.
-    let title = "";
-    selection.forEach(({ i, j }, n) => {
-      const entry = tracesForPath(data, i, j)[slot];
-      const trace = entry.trace;
-      if (n === 0) title = `[${entry.index[0]}, ${entry.index[1]}]`;
-      ctx.strokeStyle = pathColor(n);
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      for (let tick = 0; tick < trace.length; tick++) {
-        const x = tickToX(tick, trace.length, width);
-        const y = valueToY(trace[tick], peak, height);
-        if (tick === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      }
-      ctx.stroke();
-    });
+    ctx.strokeStyle = pathColor(slot);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let tick = 0; tick < trace.length; tick++) {
+      const x = tickToX(tick, trace.length, width);
+      const y = valueToY(trace[tick], peak, height);
+      if (tick === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
 
     if (cursor !== null) {
-      const nTicks = data.meta.shape[2];
-      const x = tickToX(cursor, nTicks, width);
+      const x = tickToX(cursor, data.meta.shape[2], width);
       ctx.strokeStyle = "#a05000";
       ctx.beginPath();
       ctx.moveTo(x, 0);
@@ -167,18 +154,12 @@ export function createCurrentView(data, doc = globalThis.document) {
     }
 
     ctx.fillStyle = "#444";
-    // Slot 0 is the electron's own cell, emphasised so it is identifiable
-    // WITHOUT claiming it is the collecting pad — that claim rotates with the
-    // quarter.
-    ctx.font = slot === 0
-      ? "bold 10px system-ui, sans-serif"
-      : "10px system-ui, sans-serif";
-    ctx.fillText(slot === 0 ? `${title} (start)` : title, 3, 10);
+    ctx.font = "10px system-ui, sans-serif";
+    ctx.fillText(`(${i}, ${j}) peak ${peak.toExponential(2)}`, 3, 10);
 
-    // Time axis is labelled in physical units from the payload, never ticks.
+    // Time axis in physical units from the payload, never raw ticks.
     const span = tickToUs(data.meta.shape[2] - 1, data.meta);
-    const label = `0–${span.toFixed(1)} ${timeUnits(data.meta)}`;
-    ctx.fillText(label, 3, height - 3);
+    ctx.fillText(`0–${span.toFixed(1)} ${timeUnits(data.meta)}`, 3, height - 3);
   }
 
   function drawLegend() {
@@ -195,15 +176,19 @@ export function createCurrentView(data, doc = globalThis.document) {
   }
 
   function draw() {
-    const peak = sharedPeak();
-    for (const panel of canvases) drawPanel(panel, peak);
+    for (const panel of canvases) drawPanel(panel);
     drawLegend();
   }
 
   return {
-    /** Replace the selected paths. Each is `{i, j}` in the central quarter. */
+    /**
+     * Replace the selected paths, in slot order.
+     *
+     * Only the first SLOT_COUNT are rendered; there are no panels for the rest.
+     * The four-slot cap itself is enforced by the selector.
+     */
     setSelection(next) {
-      selection = [...next];
+      selection = [...next].slice(0, SLOT_COUNT);
       draw();
     },
     /** Move the shared time cursor across all four panels. */
