@@ -570,7 +570,22 @@ async function selectField(field) {
         currentView.nTicks = data.meta.shape[2];
         currentView.meta = data.meta;
 
-        driftAnim = createDriftAnim(sceneData.paths, data.meta.shape[2]);
+        // A payload written before Phase M/Step 1 carries neither field. Warn
+        // once, naming the fix, and let createDriftAnim fall back to its old
+        // proportional behaviour rather than crashing or silently mis-timing
+        // without saying so.
+        if (data.meta.points_per_tick === undefined) {
+          console.warn(
+            "current.json predates the animation timing fields, so the dots " +
+              "are stretched across the whole tick window and will not line " +
+              "up with the current; re-run: python -m pochoir_viewer export-current",
+          );
+        }
+
+        driftAnim = createDriftAnim(sceneData.paths, data.meta.shape[2], {
+          points_per_tick: data.meta.points_per_tick,
+          path_steps: data.meta.path_steps,
+        });
         sceneRoot.add(driftAnim.points);
         wirePathSelector(data.meta);
         applyPathSelection();

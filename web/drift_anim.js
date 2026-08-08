@@ -134,9 +134,14 @@ export function createDriftAnim(paths, nTicks, timing = {}) {
     setTick(k) {
       for (const p of selected) {
         const nPoints = paths[p].points.length / 3;
+        // Falling back to nTicks (not nPoints) makes the formula collapse to
+        // the pre-Phase-M proportional stretch, k / (nTicks - 1): the wrong
+        // timing, but the OLD wrong timing, which is what a payload predating
+        // the timing fields should get. Defaulting to nPoints instead would
+        // park every dot at tick 399 of 3999 — a new and worse failure.
         place(p, tickToIndex(k, nPoints, {
           pointsPerTick,
-          pathSteps: pathSteps[p] ?? nPoints,
+          pathSteps: pathSteps[p] ?? nTicks,
         }));
       }
       attribute.needsUpdate = true;
