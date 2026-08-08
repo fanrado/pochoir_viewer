@@ -13,7 +13,17 @@ than prose: an example that crashes the page is worse than no example.
 import re
 from pathlib import Path
 
-from pochoir_viewer.current import PIXEL_OFFSET
+import numpy as np
+
+from pochoir_viewer.current import PIXEL_OFFSET, domain_block, pixel_traces
+
+N_GRID = 25
+N_PATHS = 100
+
+
+def labelled_response(n: int = N_GRID, t: int = 4) -> np.ndarray:
+    """A response the shape of the reference one, values irrelevant here."""
+    return np.zeros((n * n, t))
 
 README = Path(__file__).resolve().parent.parent / "README.md"
 ROOT = README.parent
@@ -59,18 +69,22 @@ def test_the_example_names_several_paths():
 
 
 def test_every_path_in_the_example_can_actually_be_selected():
-    # tracesForPath refuses a start outside the central quarter, and the click
-    # handler does not filter, so a documented cell outside it is an
-    # instruction to crash the page. See pochoir_viewer-u9ht.
-    outside = [
-        f"({i}, {j})"
-        for i, j in documented_selection()
-        if not (0 <= i < PIXEL_OFFSET and 0 <= j < PIXEL_OFFSET)
-    ]
+    # Was red under the old central-quarter restriction: two of the four cells
+    # the README names threw a RangeError (pochoir_viewer-u9ht). 94799a9 opened
+    # every quarter, so the rule is now the block bounds. Checked by CALLING
+    # pixel_traces rather than restating a range, so whichever side moves next
+    # the two are compared directly.
+    block = domain_block(labelled_response(), N_PATHS)
 
-    assert outside == [], (
-        "the README tells the reader to select cells that throw a RangeError: "
-        + ", ".join(outside)
+    broken = []
+    for i, j in documented_selection():
+        try:
+            pixel_traces(block, i, j)
+        except Exception as error:  # noqa: BLE001 -- any failure is a broken example
+            broken.append(f"({i}, {j}): {type(error).__name__}")
+
+    assert broken == [], (
+        "the README tells the reader to select cells that fail: " + ", ".join(broken)
     )
 
 
@@ -238,7 +252,12 @@ def test_the_selection_reset_claim_matches_the_code():
     viewer_js = (ROOT / "web" / "viewer.js").read_text()
 
     assert "resets the animation to tick 0" in flat()
-    assert re.search(r"applyPathSelection\(\)[\s\S]{0,400}tick = 0", viewer_js)
+    # Scoped to applyPathSelection's own body rather than a character window:
+    # c75d7c2 added a try/catch that pushed the reset past any fixed span.
+    body = viewer_js[viewer_js.index("function applyPathSelection()") :]
+    body = body[: body.index("\n}\n")]
+    assert "tick = 0" in body
+    assert "setCursor(0)" in body
 
 
 def test_the_time_axis_unit_claim_matches_the_payload_field():

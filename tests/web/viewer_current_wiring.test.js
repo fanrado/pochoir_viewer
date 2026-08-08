@@ -254,3 +254,99 @@ test("the no-paths branch now drops the view, closing pochoir_viewer-6zr3", () =
   assert.match(branch.slice(0, 300), /currentView\?\.setSelection\(\[\]\)/);
   assert.match(branch.slice(0, 300), /currentView = null/);
 });
+
+// --- the fail-safe click handler (c75d7c2) -----------------------------------
+//
+// The invariant is that the button state and the model never disagree with
+// what was actually drawn. A cell left looking pressed after a failed draw is
+// the worst outcome here: it reports a selection the panels never showed.
+
+test("a failed draw does not escape the click handler", () => {
+  const body = functionBody("applyPathSelection");
+
+  assert.match(body, /try \{\s*\n\s*currentView\?\.setSelection\(picks\)/);
+  assert.match(body, /catch/);
+});
+
+test("applyPathSelection reports success or failure", () => {
+  // The button state depends on knowing which happened.
+  const body = functionBody("applyPathSelection");
+
+  assert.match(body, /return false/);
+  assert.match(body, /return true/);
+});
+
+test("a failure does not blame the export", () => {
+  // Reporting 'run export-current' is what disguised pochoir_viewer-x1i0 as a
+  // missing file; the payload is loaded by this point.
+  const body = functionBody("applyPathSelection");
+  const catchBlock = body.slice(body.indexOf("catch"));
+  // Comments stripped: the block explains that it deliberately does NOT use
+  // the export message, so the phrase legitimately appears in prose there.
+  const code = catchBlock.replace(/\/\/[^\n]*/g, "");
+
+  assert.equal(/export-current/.test(code), false, "the failure still blames the export");
+  assert.match(code, /could not be drawn/);
+});
+
+test("the failure names the selection that could not be drawn", () => {
+  assert.match(functionBody("applyPathSelection"), /JSON\.stringify\(picks\)/);
+});
+
+test("a failed draw leaves the animation alone", () => {
+  // The early return sits before setSelected and the tick reset, so a failed
+  // selection cannot move the dots to match a plot that was never drawn.
+  const body = functionBody("applyPathSelection");
+  const failed = body.indexOf("return false");
+
+  assert.ok(failed > 0);
+  assert.ok(body.indexOf("driftAnim?.setSelected") > failed, "the dots move before the guard");
+  assert.ok(body.indexOf("tick = 0") > failed, "the tick resets before the guard");
+});
+
+test("the cell is painted from the result, not before the attempt", () => {
+  // Flipping aria-pressed up front is what left a cell looking selected when
+  // the draw failed.
+  const handler = source.slice(source.indexOf("cell.addEventListener"));
+  const applied = handler.indexOf("applyPathSelection()");
+  const painted = handler.indexOf("cell.setAttribute");
+
+  assert.ok(applied > 0 && painted > applied, "aria-pressed is set before the draw is attempted");
+});
+
+test("a failed toggle rolls the model back", () => {
+  // Otherwise the set and the button disagree, and the next click computes
+  // the wrong toggle.
+  const handler = source.slice(source.indexOf("cell.addEventListener"));
+  const branch = handler.slice(handler.indexOf("} else {"), handler.indexOf("});"));
+
+  assert.match(branch, /wasSelected \? selectedPaths\.add\(key\) : |if \(wasSelected\) selectedPaths\.add\(key\)/);
+  assert.match(branch, /selectedPaths\.delete\(key\)/);
+  assert.match(branch, /String\(wasSelected\)/);
+});
+
+test("clear all rolls back too", () => {
+  // The same invariant for the bulk control: a failed clear must not leave
+  // the set empty while the buttons still look pressed.
+  const handler = source.slice(source.indexOf('getElementById("path-clear")'));
+
+  assert.match(handler.slice(0, 600), /const previous = new Set\(selectedPaths\)/);
+  assert.match(handler.slice(0, 600), /for \(const key of previous\) selectedPaths\.add\(key\)/);
+});
+
+test("clear all only repaints the cells once the clear succeeded", () => {
+  const handler = source.slice(source.indexOf('getElementById("path-clear")'), source.indexOf('getElementById("path-clear")') + 600);
+  const applied = handler.indexOf("applyPathSelection()");
+  const painted = handler.indexOf('setAttribute("aria-pressed", "false")');
+
+  assert.ok(applied > 0 && painted > applied, "the cells are cleared before the draw is attempted");
+});
+
+test("every in-block start is now selectable, so the guard is a backstop", () => {
+  // Worth stating: after 94799a9 nothing in the 10x10 grid should throw. The
+  // try/catch is defence against a future narrowing, not a live filter --
+  // pochoir_viewer-u9ht is fixed by the generalisation, not by this.
+  const body = functionBody("applyPathSelection");
+
+  assert.equal(/i < 5|PIXEL_OFFSET/.test(body), false, "the handler filters cells instead");
+});

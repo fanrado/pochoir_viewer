@@ -237,14 +237,18 @@ test("every cell the selector offers can be turned into traces", () => {
 });
 
 test("the offered range matches the range the traces support", () => {
-  // Stated as the rule rather than a count, so whichever side moves, the two
-  // are compared directly.
+  // Was red while tracesForPath only accepted the central quarter
+  // (pochoir_viewer-u9ht). 94799a9 opened every quarter, so the supported
+  // range is the block width. Still stated as a comparison rather than a
+  // literal, so whichever side moves next the two are checked against each
+  // other.
   const offered = Math.max(...cells.flatMap((c) => [c.i, c.j])) + 1;
+  const supported = payload().meta.shape[0];
 
   assert.equal(
     offered,
-    PIXEL_OFFSET,
-    `the grid offers ${offered} positions per axis but only the first `
-      + `${PIXEL_OFFSET} have a defined set of traces`,
+    supported,
+    `the grid offers ${offered} positions per axis against a ${supported}-wide block`,
   );
+  assert.ok(offered > PIXEL_OFFSET, "the grid no longer reaches past the first quarter");
 });
