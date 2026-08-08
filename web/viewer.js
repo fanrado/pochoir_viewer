@@ -381,6 +381,18 @@ let currentView = null;
 let driftAnim = null;
 
 /**
+ * Selected cells, keyed "i,j" so the set survives a repaint of the grid.
+ *
+ * MUST be declared here, with the other module state, and NOT beside the
+ * selector functions further down. selectField() runs during module evaluation
+ * and reaches wirePathSelector, which reads this set; a const declared below
+ * that call is still in the temporal dead zone at that point and throws
+ * ReferenceError, so no click listener ever gets attached. The functions
+ * around it hoist and hid the problem.
+ */
+const selectedPaths = new Set();
+
+/**
  * ONE tick counter drives both the dots and the plot cursor.
  *
  * That is the whole point of the feature: two counters could drift apart and
@@ -580,11 +592,6 @@ window.addEventListener("resize", () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
   viewCube.onResize();
 });
-
-/**
- * Selected cells, keyed "i,j" so the set survives a repaint of the grid.
- */
-const selectedPaths = new Set();
 
 /**
  * Path id for grid cell (i, j).
