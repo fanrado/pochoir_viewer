@@ -17,6 +17,7 @@ import {
   peakMagnitude,
   tickToUs,
   tickToX,
+  traceAt,
   tracesForPath,
   valueToY,
 } from "../../web/current_build.js";
@@ -402,4 +403,97 @@ test("a payload whose length matches passes the guard", async () => {
   });
 
   await assert.doesNotReject(() => fetchCurrent());
+});
+
+// --- traceAt, now public (7dc6140) -------------------------------------------
+//
+// "This is the only place the buffer offset is computed", so it is worth
+// testing on its own: every other reader inherits whatever it gets wrong.
+// Note it has NO bounds check, unlike tracesForPath -- pinned below, because
+// an exported accessor that silently returns an empty array on a bad index is
+// a different contract from one that throws, and callers need to know which.
+
+test("traceAt reads the cell's own contiguous run", () => {
+  const data = payload();
+
+  assert.equal(traceAt(data, 3, 4)[0], 304);
+  assert.deepEqual([...traceAt(data, 3, 4)], [304, 1, 2, 3]);
+});
+
+test("traceAt agrees with tracesForPath's first entry", () => {
+  // tracesForPath is built on it, so a divergence would mean two offsets.
+  const data = payload();
+
+  for (const [i, j] of [[0, 0], [2, 3], [7, 8], [9, 9]]) {
+    assert.deepEqual(
+      [...traceAt(data, i, j)],
+      [...tracesForPath(data, i, j)[0].trace],
+      `(${i}, ${j})`,
+    );
+  }
+});
+
+test("traceAt is a view, not a copy", () => {
+  const data = payload();
+
+  assert.equal(traceAt(data, 1, 1).buffer, data.block.buffer);
+});
+
+test("the offset is row-major: j varies fastest", () => {
+  // (i * cols + j) * nTicks. A column-major offset would still return
+  // plausible traces, just the wrong ones.
+  const data = payload();
+  const at = (i, j) => traceAt(data, i, j)[0];
+
+  assert.equal(at(0, 1), 1, "adjacent j is not the adjacent run");
+  assert.equal(at(1, 0), 100, "adjacent i did not step a whole row");
+});
+
+test("traceAt reads the column count from the payload shape", () => {
+  // A non-square block would expose a hardcoded 10 or a rows/cols swap.
+  const block = new Float32Array(3 * 5 * 2);
+  for (let i = 0; i < 3; i++) {
+    for (let j = 0; j < 5; j++) {
+      block[(i * 5 + j) * 2] = i * 100 + j;
+    }
+  }
+  const data = { meta: { shape: [3, 5, 2] }, block };
+
+  assert.equal(traceAt(data, 2, 4)[0], 204);
+  assert.equal(traceAt(data, 1, 0)[0], 100);
+});
+
+test("every cell of the block is reachable and distinct", () => {
+  const data = payload();
+  const seen = new Set();
+
+  for (let i = 0; i < M; i++) {
+    for (let j = 0; j < M; j++) {
+      const trace = traceAt(data, i, j);
+      assert.equal(trace.length, T, `(${i}, ${j}) is short`);
+      seen.add(trace[0]);
+    }
+  }
+
+  assert.equal(seen.size, M * M);
+});
+
+test("traceAt does NOT bounds-check, unlike tracesForPath", () => {
+  // Pinned as today's contract. An out-of-block index runs off the end of the
+  // buffer and subarray clamps, so the caller gets a SHORT or EMPTY trace
+  // rather than an error. tracesForPath throws on the same input, so the two
+  // public entry points differ -- deliberate or not, a caller has to know.
+  const data = payload();
+
+  assert.doesNotThrow(() => traceAt(data, M, 0));
+  assert.equal(traceAt(data, M, 0).length, 0, "the out-of-block read was not empty");
+  assert.throws(() => tracesForPath(data, M, 0), /outside the/);
+});
+
+test("a short read is silently short rather than padded", () => {
+  // The last cell plus one: subarray clamps to the end of the buffer.
+  const data = payload();
+
+  assert.ok(traceAt(data, M - 1, M - 1).length === T);
+  assert.ok(traceAt(data, M - 1, M).length < T);
 });
