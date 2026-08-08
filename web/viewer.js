@@ -398,17 +398,36 @@ let currentView = null;
 /** The drifting-electron dots, or null for a domain without paths. */
 let driftAnim = null;
 
+/** Panels available, so the selection can hold exactly one path per panel. */
+const SELECTION_SLOTS = 4;
+
 /**
- * Selected cells, keyed "i,j" so the set survives a repaint of the grid.
+ * Selected cells in SLOT ORDER: index n holds the "i,j" key drawn by panel n,
+ * or null for an empty slot.
+ *
+ * Ordered and fixed-length rather than a Set because the slot index IS the
+ * panel index. Deselecting frees that slot and the next selection reuses the
+ * freed index, so a path keeps its panel position for as long as it stays
+ * selected instead of shuffling when a neighbour is removed.
  *
  * MUST be declared here, with the other module state, and NOT beside the
  * selector functions further down. selectField() runs during module evaluation
- * and reaches wirePathSelector, which reads this set; a const declared below
- * that call is still in the temporal dead zone at that point and throws
+ * and reaches wirePathSelector, which reads this; a const declared below that
+ * call is still in the temporal dead zone at that point and throws
  * ReferenceError, so no click listener ever gets attached. The functions
  * around it hoist and hid the problem.
  */
-const selectedPaths = new Set();
+const selectedSlots = new Array(SELECTION_SLOTS).fill(null);
+
+/** Slot holding `key`, or -1. */
+function slotOf(key) {
+  return selectedSlots.indexOf(key);
+}
+
+/** Lowest free slot, or -1 when all four are taken. */
+function freeSlot() {
+  return selectedSlots.indexOf(null);
+}
 
 /**
  * Aborts the previous rebuild's mode-button listeners.
@@ -710,7 +729,10 @@ function applyPathSelection() {
   const meta = currentView?.meta;
   const m = meta?.shape?.[0] ?? 10;
 
-  const picks = [...selectedPaths].map((key) => {
+  // Slot order is preserved and holes are kept, so panel n keeps drawing slot
+  // n; current_view renders an empty slot as a blank panel.
+  const picks = selectedSlots.map((key) => {
+    if (!key) return null;
     const [i, j] = key.split(",").map(Number);
     return { i, j };
   });
@@ -725,7 +747,9 @@ function applyPathSelection() {
     return false;
   }
 
-  driftAnim?.setSelected(picks.map(({ i, j }) => pathIdFor(i, j, m)));
+  driftAnim?.setSelected(
+    picks.filter(Boolean).map(({ i, j }) => pathIdFor(i, j, m)),
+  );
 
   // Back to the start on any change: a newly selected electron would otherwise
   // pop into view mid-drift, at a tick it was never animated through.
@@ -747,7 +771,7 @@ function wirePathSelector(meta) {
 
   // Open on one path rather than an empty panel: four blank canvases give no
   // clue that anything is meant to appear in them.
-  if (selectedPaths.size === 0) selectedPaths.add("0,0");
+  if (selectedSlots.every((k) => k === null)) selectedSlots[0] = "0,0";
   for (const cell of pathCells()) {
     const i = Number(cell.dataset.i);
     const j = Number(cell.dataset.j);
@@ -756,36 +780,47 @@ function wirePathSelector(meta) {
       const mm = start.map((v) => v.toFixed(2)).join(", ");
       cell.title = `path (${i}, ${j}) — start ${mm} mm`;
     }
-    cell.setAttribute("aria-pressed", String(selectedPaths.has(`${i},${j}`)));
+    cell.setAttribute("aria-pressed", String(slotOf(`${i},${j}`) >= 0));
 
     cell.addEventListener("click", () => {
       // Apply FIRST, then reflect the result in the button. Flipping
       // aria-pressed up front leaves the cell looking selected even when the
       // selection could not be drawn.
       const key = `${i},${j}`;
-      const wasSelected = selectedPaths.has(key);
-      if (wasSelected) selectedPaths.delete(key);
-      else selectedPaths.add(key);
+      const held = slotOf(key);
+      const target = held >= 0 ? held : freeSlot();
+
+      // A 5th selection is REFUSED outright: no slot written, no aria-pressed
+      // flip, the cell simply does not toggle. Silently dropping the oldest
+      // would move another path out of its panel without the user asking.
+      if (target < 0) {
+        console.warn(
+          `at most ${SELECTION_SLOTS} paths can be selected; ` +
+            "deselect one before choosing another",
+        );
+        return;
+      }
+
+      const previous = selectedSlots[target];
+      selectedSlots[target] = held >= 0 ? null : key;
 
       if (applyPathSelection()) {
-        cell.setAttribute("aria-pressed", String(!wasSelected));
+        cell.setAttribute("aria-pressed", String(held < 0));
       } else {
-        // Roll the model back so the set and the button agree again.
-        if (wasSelected) selectedPaths.add(key);
-        else selectedPaths.delete(key);
-        cell.setAttribute("aria-pressed", String(wasSelected));
+        // Roll the slot back so the model and the button agree again.
+        selectedSlots[target] = previous;
+        cell.setAttribute("aria-pressed", String(held >= 0));
       }
     });
   }
 
   document.getElementById("path-clear")?.addEventListener("click", () => {
-    const previous = new Set(selectedPaths);
-    selectedPaths.clear();
+    const previous = [...selectedSlots];
+    selectedSlots.fill(null);
     if (applyPathSelection()) {
       for (const cell of pathCells()) cell.setAttribute("aria-pressed", "false");
     } else {
-      selectedPaths.clear();
-      for (const key of previous) selectedPaths.add(key);
+      previous.forEach((key, n) => { selectedSlots[n] = key; });
     }
   });
 }

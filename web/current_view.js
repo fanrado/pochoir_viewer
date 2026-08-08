@@ -165,7 +165,10 @@ export function createCurrentView(data, doc = globalThis.document) {
   function drawLegend() {
     if (!legend) return;
     legend.replaceChildren();
-    selection.forEach(({ i, j }, n) => {
+    selection.forEach((pick, n) => {
+      // Slots arrive with holes: an empty slot has no legend row either.
+      if (!pick) return;
+      const { i, j } = pick;
       const row = doc.createElement("div");
       const swatch = doc.createElement("span");
       swatch.className = "current-swatch";
