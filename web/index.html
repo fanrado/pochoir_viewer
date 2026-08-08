@@ -153,7 +153,16 @@
     display: inline-block; width: 10px; height: 10px; border: 1px solid #999;
     vertical-align: middle;
   }
+  /* Each panel zooms independently, so a zoomed panel and a full-span one look
+     alike apart from their axis labels. This returns ALL four at once, which is
+     the way out when several have been zoomed and the labels no longer agree. */
+  #current-reset-zoom { width: 100%; margin-top: 6px; pointer-events: auto; }
   #current-play { width: 100%; margin-top: 6px; pointer-events: auto; }
+
+  /* The axis label carries the window each panel is showing, so it is the one
+     thing that says a panel is zoomed. Spelled out here because it is easy to
+     mistake for decoration and drop. */
+  #current-zoom-help { margin-top: 4px; color: #555; font-size: 11px; }
 
   #readout {
     position: fixed; bottom: 12px; left: 12px; padding: 8px 10px; min-height: 1em;
@@ -306,6 +315,12 @@
     <button id="path-clear">clear all</button>
   </div>
   <div id="current-legend"></div>
+  <div id="current-zoom-help">
+    drag a panel to zoom its time axis · wheel to zoom about the pointer ·
+    double-click a panel to reset it. Each panel zooms on its own; the range
+    under each one is the window it is showing.
+  </div>
+  <button id="current-reset-zoom">reset zoom (all panels)</button>
   <button id="current-play">play</button>
 </div>
 

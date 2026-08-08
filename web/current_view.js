@@ -296,6 +296,23 @@ export function createCurrentView(data, doc = globalThis.document) {
 
   for (const panel of canvases) wirePanel(panel);
 
+  /**
+   * One control returning EVERY panel to the full span.
+   *
+   * The per-panel double-click resets one; with four independent windows the
+   * way out of a confusing state is resetting them together, so this is not
+   * redundant with it.
+   */
+  const resetZoom = doc.getElementById("current-reset-zoom");
+  resetZoom?.addEventListener?.("click", (event) => {
+    event?.stopPropagation?.();
+    const nTicks = data.meta.shape[2];
+    for (let slot = 0; slot < viewports.length; slot++) {
+      viewports[slot] = resetViewport(nTicks);
+    }
+    draw();
+  });
+
   return {
     /**
      * Replace the selected paths, in slot order.
