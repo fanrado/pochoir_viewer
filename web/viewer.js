@@ -526,23 +526,44 @@ async function selectField(field) {
     // Same opt-in-absent handling as the potential payload: a missing
     // current.json is a normal state for a dataset that has not been exported
     // with export-current, not an error worth breaking the page over.
+    // ONLY the fetch is treated as opt-in-absent. Wrapping the wiring in the
+    // same catch reported code defects as a missing export twice over
+    // (pochoir_viewer-x1i0, pochoir_viewer-iu0z): the payload was fine both
+    // times, and the one message the user saw sent them to the exporter.
+    let data = null;
     try {
-      const data = await fetchCurrent();
-      currentView = createCurrentView(data);
-      currentView.nTicks = data.meta.shape[2];
-      currentView.meta = data.meta;
-
-      driftAnim = createDriftAnim(sceneData.paths, data.meta.shape[2]);
-      sceneRoot.add(driftAnim.points);
-      wirePathSelector(data.meta);
-      applyPathSelection();
+      data = await fetchCurrent();
     } catch (error) {
       currentView = null;
       console.warn(
-        `induced-current panel unavailable (${error.message}); ` +
+        `induced-current payload unavailable (${error.message}); ` +
           "run: python -m pochoir_viewer export-current",
       );
       disable("current-play", "run: python -m pochoir_viewer export-current");
+    }
+
+    if (data) {
+      // Failures from here on are wiring bugs, not a missing payload, and are
+      // reported as such. Still caught, so one broken panel cannot take the
+      // rest of the scene down with it.
+      try {
+        currentView = createCurrentView(data);
+        currentView.nTicks = data.meta.shape[2];
+        currentView.meta = data.meta;
+
+        driftAnim = createDriftAnim(sceneData.paths, data.meta.shape[2]);
+        sceneRoot.add(driftAnim.points);
+        wirePathSelector(data.meta);
+        applyPathSelection();
+      } catch (error) {
+        currentView = null;
+        console.error(
+          "induced-current panel failed to wire up; the payload loaded fine, " +
+            "so this is a bug in the viewer, not a missing export",
+          error,
+        );
+        disable("current-play", "panel wiring failed — see the console");
+      }
     }
   }
 
