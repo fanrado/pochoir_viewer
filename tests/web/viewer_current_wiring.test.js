@@ -386,8 +386,11 @@ function topLevelBindings() {
 /** Functions reached while selectField runs. */
 const EVALUATION_PATH = [
   "selectField",
+  "buildPotential",
   "wirePathSelector",
   "applyPathSelection",
+  "applySliceVisibility",
+  "setPressed",
   "pathIdFor",
   "pathCells",
   "pauseCurrent",

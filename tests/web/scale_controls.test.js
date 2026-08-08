@@ -8,8 +8,10 @@ import { test } from "node:test";
 
 import {
   CONTOUR_LEVEL_COUNT,
+  SLICE_MODES,
   contourLevels,
   wireScaleControls,
+  wireSliceModes,
 } from "../../web/potential_view.js";
 
 const weight = (over = {}) => ({ vmin: 0, vmax: 1, units: "dimensionless", ...over });
@@ -144,8 +146,18 @@ function fakeElement(tag = "div", value = "") {
     classList: { toggle: (n, on) => (on ? classes.add(n) : classes.delete(n)), contains: (n) => classes.has(n) },
     getAttribute: (n) => attrs[n],
     setAttribute: (n, v) => { attrs[n] = v; },
-    addEventListener(t, fn) { (this.handlers[t] ??= []).push(fn); },
-    fire(t) { for (const fn of this.handlers[t] ?? []) fn(); },
+    // Honours { signal } like a real EventTarget: without that, a test of
+    // AbortController teardown would pass against a stub that never removes
+    // anything.
+    addEventListener(t, fn, options) {
+      const list = (this.handlers[t] ??= []);
+      list.push(fn);
+      options?.signal?.addEventListener?.("abort", () => {
+        const at = list.indexOf(fn);
+        if (at >= 0) list.splice(at, 1);
+      });
+    },
+    fire(t) { for (const fn of [...(this.handlers[t] ?? [])]) fn(); },
   };
 }
 
@@ -360,4 +372,81 @@ test("the pressed button is also the active one", () => {
     const pressed = els[name].getAttribute("aria-pressed") === "true";
     assert.equal(els[name].classList.contains("active"), pressed, name);
   }
+});
+
+// --- wireSliceModes' abort signal (49b330c) ----------------------------------
+//
+// potential_view.js IS importable, so this is tested by running it rather than
+// by reading viewer.js. The point is a leak, not a visible break: viewer.js
+// re-wires these buttons on every field switch, and each stale closure holds
+// the sliceView and contourView that disposePotential has just disposed.
+
+function modeRig() {
+  const els = {};
+  for (const mode of SLICE_MODES) els[`mode-${mode}`] = fakeElement("button");
+  return {
+    els,
+    doc: { getElementById: (id) => els[id] ?? null },
+    sliceView: { mesh: { visible: null } },
+    contourView: { group: { visible: null } },
+  };
+}
+
+test("the mode buttons respond to clicks when no signal is given", () => {
+  // The pre-existing behaviour must survive the new optional argument.
+  const rig = modeRig();
+  const modes = wireSliceModes(rig.sliceView, rig.contourView, rig.doc);
+
+  rig.els["mode-contours"].fire("click");
+
+  assert.equal(modes.getMode(), "contours");
+  assert.equal(rig.sliceView.mesh.visible, false);
+});
+
+test("an aborted wiring stops responding to clicks", () => {
+  const rig = modeRig();
+  const controller = new AbortController();
+  const modes = wireSliceModes(rig.sliceView, rig.contourView, rig.doc, {
+    signal: controller.signal,
+  });
+
+  controller.abort();
+  rig.els["mode-contours"].fire("click");
+
+  assert.equal(modes.getMode(), "both", "the aborted listener still fired");
+});
+
+test("aborting the first wiring leaves the second one working", () => {
+  // The actual field-switch sequence: wire, abort, re-wire against the new
+  // views. Only the new views may move.
+  const rig = modeRig();
+  const first = new AbortController();
+  wireSliceModes(rig.sliceView, rig.contourView, rig.doc, { signal: first.signal });
+
+  first.abort();
+  const fresh = { mesh: { visible: null } };
+  const freshContours = { group: { visible: null } };
+  const second = wireSliceModes(fresh, freshContours, rig.doc, {
+    signal: new AbortController().signal,
+  });
+  rig.sliceView.mesh.visible = "untouched";
+
+  rig.els["mode-contours"].fire("click");
+
+  assert.equal(second.getMode(), "contours");
+  assert.equal(fresh.mesh.visible, false, "the new view did not respond");
+  assert.equal(rig.sliceView.mesh.visible, "untouched", "the disposed view was still driven");
+});
+
+test("without a signal the stale wiring keeps driving its disposed views", () => {
+  // The leak stated directly, as the reason the signal exists. Pinned so the
+  // optional argument cannot quietly become a no-op.
+  const rig = modeRig();
+  wireSliceModes(rig.sliceView, rig.contourView, rig.doc);
+  wireSliceModes({ mesh: { visible: null } }, { group: { visible: null } }, rig.doc);
+  rig.sliceView.mesh.visible = "untouched";
+
+  rig.els["mode-contours"].fire("click");
+
+  assert.equal(rig.sliceView.mesh.visible, false, "the stale wiring stopped responding on its own");
 });

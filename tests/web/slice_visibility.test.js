@@ -238,59 +238,46 @@ test("applySliceVisibility is the only place visibility is assigned", () => {
   );
 });
 
-// --- listener accumulation across field switches ------------------------------
+// --- listener teardown across field switches (49b330c) -----------------------
 //
-// buildPotential is called from selectField, so it runs again on every field
-// switch. It both calls wireSliceModes -- which attaches a click listener to
-// each mode button -- and attaches three of its own. Neither removes the
-// previous set, so the listeners accumulate: after drift -> weight -> drift,
-// each mode button carries three of each.
-//
-// The visible behaviour stays correct, which is why this is pinned rather than
-// filed as a break: the newest viewer listener runs last and calls
-// applySliceVisibility against the current views, so the final state is right.
-// What accumulates is stale wireSliceModes closures holding DISPOSED sliceView
-// and contourView objects, which they then set .visible on. That retains them
-// and does a growing amount of pointless work per click.
+// buildPotential runs again on every field switch and re-wires both sets of
+// mode listeners. 49b330c gives it an AbortController so the previous set is
+// dropped first; without it each rebuild left closures holding the sliceView
+// and contourView disposePotential had just disposed, keeping those geometries
+// alive for the life of the page.
 
-test("the mode listeners are attached inside buildPotential", () => {
-  // Pinning where they are, because that is the cause. If they move to module
-  // scope -- attached once, like the layer buttons -- this test should be
-  // rewritten to assert that instead.
-  const start = source.indexOf("function buildPotential(");
-  const rest = source.slice(start);
-  let depth = 0;
-  let end = 0;
-  const open = rest.indexOf("{");
-  for (let i = open; i < rest.length; i++) {
-    if (rest[i] === "{") depth++;
-    else if (rest[i] === "}" && --depth === 0) { end = i; break; }
-  }
-  const body = rest.slice(0, end);
+test("the previous rebuild's listeners are aborted before re-wiring", () => {
+  const body = functionSource("buildPotential");
 
-  assert.match(body, /addEventListener\("click"/, "the mode listeners left buildPotential");
-  assert.match(body, /sliceModes = wireSliceModes\(/);
+  assert.match(body, /sliceControlsAbort\?\.abort\(\)/);
+  assert.match(body, /sliceControlsAbort = new AbortController\(\)/);
+  assert.ok(
+    body.indexOf("abort()") < body.indexOf("new AbortController"),
+    "the new controller is created before the old one is aborted",
+  );
 });
 
-test("buildPotential runs once per field switch, so they accumulate", () => {
-  // The other half of the cause: one call site, inside selectField.
-  const calls = [...source.matchAll(/\bbuildPotential\(/g)];
+test("both sets of listeners take the signal", () => {
+  // Aborting only one set would halve the leak rather than end it.
+  const body = functionSource("buildPotential");
 
-  assert.equal(calls.length, 2, "buildPotential's call sites changed");
-  const selectField = source.slice(source.indexOf("async function selectField"));
-  assert.match(selectField.slice(0, 4000), /buildPotential\(meta, volume\)/);
+  assert.match(body, /wireSliceModes\(sliceView, contourView, document, \{ signal \}\)/);
+  assert.match(body, /addEventListener\("click",[\s\S]*?\}, \{ signal \}\)/);
 });
 
-test("nothing removes the previous listeners", () => {
-  // A removeEventListener or an AbortController would fix it; neither is
-  // present today.
-  assert.equal(/removeEventListener/.test(source), false, "listeners are now removed somewhere");
-  assert.equal(/AbortController/.test(source), false, "an AbortController appeared");
+test("the abort handle is module state declared before evaluation", () => {
+  // buildPotential runs during module evaluation via selectField, so a
+  // controller declared below would be the 3cc9bf5 temporal dead zone again.
+  const lines = source.split("\n");
+  const declared = lines.findIndex((l) => /^let sliceControlsAbort/.test(l)) + 1;
+  const evaluated = lines.findIndex((l) => /^await selectField\(/.test(l)) + 1;
+
+  assert.ok(declared > 0, "sliceControlsAbort is no longer top-level");
+  assert.ok(declared < evaluated, "sliceControlsAbort is in its temporal dead zone at first use");
 });
 
-test("the layer buttons are wired once, for contrast", () => {
-  // wireLayer is called at module scope, so those do not accumulate. This is
-  // the shape the mode buttons would need.
+test("the layer buttons still need no teardown", () => {
+  // They are wired once at module scope; only the re-wired controls need it.
   const wireLayerCalls = [...source.matchAll(/^wireLayer\(/gm)];
 
   assert.ok(wireLayerCalls.length >= 3, "the layer buttons moved into a function");
