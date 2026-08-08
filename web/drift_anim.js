@@ -41,20 +41,38 @@ export function samplePath(points, f, out) {
 }
 
 /**
- * Fractional decimated index for response tick `k`.
+ * Fractional decimated index for response tick `k`, for ONE path.
  *
- * THE MISMATCH THIS BRIDGES: the response has T = 3999 ticks but scene.json
- * ships paths decimated to at most 400 points (export.py max_points), so there
- * are roughly ten ticks per stored point. Mapping tick to a fractional index
- * and interpolating keeps the dot moving smoothly; snapping to the nearest
- * stored point would make it jump every ~10 ticks.
+ * Two conversions, and the second is what the old proportional stretch got
+ * wrong:
+ *
+ * 1. tick -> RAW step index, `k * pointsPerTick`. The path array and the
+ *    response are on different clocks; `pointsPerTick` comes from the payload
+ *    (1.0 for the reference dataset, 50 where 200000 path points are binned
+ *    into 4000).
+ * 2. raw step -> decimated index, scaled by the path's OWN real length. The
+ *    decimated array spans `pathSteps` raw steps in `nPoints` samples.
+ *
+ * CLAMPED AT `pathSteps`: once the electron is collected it parks at the anode
+ * and the remaining ticks move it no further. Stretching every path across all
+ * T ticks instead — which is what `k / (nTicks - 1)` did — made every electron
+ * arrive exactly at the final tick whatever its real drift length, so path 0
+ * (1810 of 3999 steps) had its current spike at ~45% of the window while its
+ * dot was not yet halfway down.
  *
  * `nPoints` is read per path rather than assumed to be 400, because decimate()
  * returns fewer points for short paths.
  */
-export function tickToIndex(k, nTicks, nPoints) {
-  if (nTicks < 2 || nPoints < 2) return 0;
-  return (k / (nTicks - 1)) * (nPoints - 1);
+export function tickToIndex(k, nPoints, { pointsPerTick = 1, pathSteps } = {}) {
+  if (nPoints < 2) return 0;
+
+  const steps = pathSteps ?? 0;
+  if (steps < 2) return 0;
+
+  const raw = k * pointsPerTick;
+  // Fraction of this path's OWN drift completed, never of the whole window.
+  const fraction = Math.min(raw / (steps - 1), 1);
+  return fraction * (nPoints - 1);
 }
 
 /**
@@ -64,7 +82,12 @@ export function tickToIndex(k, nTicks, nPoints) {
  * scales the dots in step with the paths they ride on — a dot in world space
  * would drift off its own path the moment z is compressed.
  */
-export function createDriftAnim(paths, nTicks) {
+export function createDriftAnim(paths, nTicks, timing = {}) {
+  // points_per_tick and path_steps come from current.json (Phase M/Step 1).
+  // Without them a dot cannot be placed: pathSteps falls back to the stored
+  // point count, which is only right when the path was never padded.
+  const pointsPerTick = timing.points_per_tick ?? 1;
+  const pathSteps = timing.path_steps ?? [];
   const count = paths.length;
   const positions = new Float32Array(count * 3);
   const scratch = [0, 0, 0];
@@ -110,7 +133,11 @@ export function createDriftAnim(paths, nTicks) {
      */
     setTick(k) {
       for (const p of selected) {
-        place(p, tickToIndex(k, nTicks, paths[p].points.length / 3));
+        const nPoints = paths[p].points.length / 3;
+        place(p, tickToIndex(k, nPoints, {
+          pointsPerTick,
+          pathSteps: pathSteps[p] ?? nPoints,
+        }));
       }
       attribute.needsUpdate = true;
     },
