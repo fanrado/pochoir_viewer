@@ -350,3 +350,95 @@ test("every in-block start is now selectable, so the guard is a backstop", () =>
 
   assert.equal(/i < 5|PIXEL_OFFSET/.test(body), false, "the handler filters cells instead");
 });
+
+// --- temporal dead zone at module evaluation (3cc9bf5) -----------------------
+//
+// viewer.js does `await selectField("drift")` at module scope, so everything
+// selectField reaches runs DURING module evaluation. Function declarations
+// hoist, but const and let do not: a binding declared below that call is still
+// in its temporal dead zone when the call runs, and touching it throws
+// ReferenceError. 3cc9bf5 hit exactly this -- selectedPaths sat beside the
+// selector functions, so wirePathSelector threw and no click listener was ever
+// attached. The selector rendered perfectly and did nothing.
+//
+// Nothing else in the suite can see this: the functions parse, the ids all
+// exist, and the static checks above pass either way. So the ordering is
+// checked directly.
+
+/** Line number of the module-scope `await selectField(...)`. */
+function moduleEvalLine() {
+  const lines = source.split("\n");
+  const n = lines.findIndex((line) => /^await selectField\(/.test(line));
+  assert.ok(n > 0, "viewer.js no longer calls selectField at module scope");
+  return n + 1;
+}
+
+/** Top-level `const`/`let` bindings, as name -> 1-based declaration line. */
+function topLevelBindings() {
+  const found = new Map();
+  source.split("\n").forEach((line, n) => {
+    const match = line.match(/^(?:const|let)\s+([A-Za-z_$][\w$]*)/);
+    if (match) found.set(match[1], n + 1);
+  });
+  return found;
+}
+
+/** Functions reached while selectField runs. */
+const EVALUATION_PATH = [
+  "selectField",
+  "wirePathSelector",
+  "applyPathSelection",
+  "pathIdFor",
+  "pathCells",
+  "pauseCurrent",
+];
+
+test("every binding touched during module evaluation is declared before it", () => {
+  // The general form of the 3cc9bf5 bug, not just the one symbol it hit.
+  const evalLine = moduleEvalLine();
+  const bindings = topLevelBindings();
+
+  const late = [];
+  for (const name of EVALUATION_PATH) {
+    const body = functionBody(name);
+    for (const [binding, line] of bindings) {
+      if (line > evalLine && new RegExp(`\\b${binding}\\b`).test(body)) {
+        late.push(`${binding} (line ${line}) used by ${name}, evaluated at line ${evalLine}`);
+      }
+    }
+  }
+
+  assert.deepEqual(late, [], `temporal dead zone at module evaluation:\n${late.join("\n")}`);
+});
+
+test("selectedPaths specifically is declared with the module state", () => {
+  // The symbol that actually broke, kept as its own check so a regression
+  // names it directly.
+  const bindings = topLevelBindings();
+
+  assert.ok(bindings.has("selectedPaths"), "selectedPaths is no longer top-level");
+  assert.ok(
+    bindings.get("selectedPaths") < moduleEvalLine(),
+    "selectedPaths is declared after the module-scope selectField call again",
+  );
+});
+
+test("it sits with the other current-view state, not with the selector functions", () => {
+  // Where it is matters as much as that it works: the next person to tidy
+  // these functions together would reintroduce the bug.
+  const bindings = topLevelBindings();
+  const selectedPaths = bindings.get("selectedPaths");
+
+  assert.ok(
+    Math.abs(selectedPaths - bindings.get("driftAnim")) < 20,
+    "selectedPaths drifted away from driftAnim and the rest of the module state",
+  );
+});
+
+test("the reason it must stay put is recorded next to it", () => {
+  // A bare `const selectedPaths = new Set()` invites being moved back.
+  const declaration = source.indexOf("const selectedPaths = new Set()");
+  const preceding = source.slice(Math.max(0, declaration - 700), declaration);
+
+  assert.match(preceding, /temporal dead zone|TDZ/i);
+});
