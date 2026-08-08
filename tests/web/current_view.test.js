@@ -14,6 +14,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 
 import {
   PANELS,
@@ -603,4 +604,43 @@ test("a hole gets no cursor", () => {
 
   assert.deepEqual(cursorOps(doc, SLOTS[1]), []);
   assert.ok(cursorOps(doc, SLOTS[0]).length > 0);
+});
+
+// --- no partner machinery ------------------------------------------------------
+
+test("the view reads single cells, never the partner helper", async () => {
+  // The structural guarantee behind Phase K: if current_view still reached for
+  // tracesForPath, removing the partner machinery would break the panels. It
+  // must import traceAt and nothing that infers neighbours.
+  const source = await readFile(
+    new URL("../../web/current_view.js", import.meta.url),
+    "utf8",
+  );
+
+  assert.doesNotMatch(source, /tracesForPath/, "the view still infers partners");
+  assert.doesNotMatch(source, /partnerIndex|PIXEL_OFFSET/, "partner arithmetic survives");
+  assert.match(source, /\btraceAt\b/, "the view no longer reads single cells");
+});
+
+test("a panel's trace is its own cell, not a mirrored partner", () => {
+  // (7, 2) mirrors to (2, 2), (7, 7) and (2, 7). With only (7, 2) selected,
+  // none of those may appear in any panel — the exact failure in the reported
+  // screenshot, where one selection filled all four.
+  const data = payload();
+  const doc = fakeDoc();
+
+  createCurrentView(data, doc).setSelection([{ i: 7, j: 2 }]);
+
+  assert.deepEqual([...curves(doc, SLOTS[0]).map(([, , y]) => y)].length > 0, true);
+  for (const [pi, pj] of [[2, 2], [7, 7], [2, 7]]) {
+    for (const id of SLOTS) {
+      const title = titleOf(doc, id);
+      if (title === undefined) continue;
+      assert.doesNotMatch(
+        title,
+        new RegExp(`\\(${pi}, ${pj}\\)`),
+        `${id} shows the mirrored partner (${pi}, ${pj})`,
+      );
+    }
+  }
 });
