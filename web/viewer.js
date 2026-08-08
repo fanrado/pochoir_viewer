@@ -343,11 +343,21 @@ function buildPotential(meta, volume) {
   // extentMm is already the new field's domain here (selectField refreshes it
   // before loading the potential), so a cropped payload is caught on switch too.
   renderPayloadInfo(meta, extentMm);
+  sliceModes = wireSliceModes(sliceView, contourView);
+
+  // wireSliceModes sets visibility straight from the mode. Re-gate after every
+  // mode click so the slice layer still has the final say, and keep the
+  // contours layer button agreeing with the mode it implies.
+  for (const mode of ["image", "contours", "both"]) {
+    document.getElementById(`mode-${mode}`)?.addEventListener("click", () => {
+      setPressed("layer-contours", mode !== "image");
+      applySliceVisibility();
+    });
+  }
+
   // Honour whatever the layer buttons currently say, then let the display mode
   // decide between image, contours, or both.
-  sliceView.mesh.visible = pressed("layer-slice");
-  contourView.group.visible = pressed("layer-contours");
-  sliceModes = wireSliceModes(sliceView, contourView);
+  applySliceVisibility();
 
   // Colour scale, decades and contour count. Log is the weighting default and
   // is disabled for the signed drift potential.
@@ -572,11 +582,53 @@ function wireLayer(id, apply) {
   });
 }
 
+/** Set a layer button's pressed state and its active styling together. */
+function setPressed(id, on) {
+  const button = document.getElementById(id);
+  if (!button) return;
+  button.setAttribute("aria-pressed", String(on));
+  button.classList.toggle("active", on);
+}
+
+/**
+ * Decide what the slice layer shows, from all three controls at once.
+ *
+ * The slice LAYER governs the whole layer: with it off, neither the textured
+ * plane nor the contour lines are in the scene, whatever the display mode says.
+ * Previously the layer button moved only sliceView.mesh, so switching the layer
+ * off left 200 contour lines behind as a grid floating in the volume.
+ *
+ * With the layer on, the mode buttons decide which of the two shows, further
+ * gated by the contours layer button. This is the ONE place visibility is
+ * decided, so the controls cannot contradict each other.
+ */
+function applySliceVisibility() {
+  const layerOn = pressed("layer-slice");
+  const mode = sliceModes?.getMode() ?? "both";
+
+  if (sliceView) sliceView.mesh.visible = layerOn && mode !== "contours";
+  if (contourView) {
+    contourView.group.visible =
+      layerOn && mode !== "image" && pressed("layer-contours");
+  }
+}
+
 wireLayer("layer-paths", (on) => { pathLines.visible = on; });
 wireLayer("layer-boundary", (on) => { boundaryGroup.visible = on; });
 wireLayer("layer-slice", (on) => {
-  if (sliceView) sliceView.mesh.visible = on;
+  applySliceVisibility();
   potentialControls.hidden = !on;
+});
+wireLayer("layer-contours", (on) => {
+  // Asking for contours while the mode is image-only would otherwise press a
+  // button that changes nothing; move the mode to 'both' so the request is
+  // honoured rather than silently ignored.
+  // Click the mode button rather than reaching into wireSliceModes: that keeps
+  // mode ownership in potential_view.js, where the mode state lives.
+  if (on && sliceModes?.getMode() === "image") {
+    document.getElementById("mode-both")?.click();
+  }
+  applySliceVisibility();
 });
 
 enableKeyboardShortcuts({
