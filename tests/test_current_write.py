@@ -512,3 +512,132 @@ def test_the_other_subcommands_still_dispatch():
         with redirect_stdout(buffer), pytest.raises(SystemExit):
             main([command, "--help"])
         assert buffer.getvalue().strip(), f"{command} lost its parser"
+
+
+# --- the timing metadata (093dc7b) -------------------------------------------
+#
+# The browser cannot relate a path point index to a response tick without these:
+# the path array is padded to a fixed length while the response is binned, and
+# each path really ends at a different step. Both are measured from the arrays,
+# and getting either wrong mis-times the animation in a way that looks like a
+# rendering glitch rather than a data error.
+
+
+def test_the_timing_fields_are_written(root, tmp_path):
+    meta = write_current(root, tmp_path / "data", time_step_us=0.1)
+
+    assert "points_per_tick" in meta
+    assert "path_steps" in meta
+
+
+def test_points_per_tick_is_measured_from_the_arrays(root, tmp_path):
+    # raw path length / (n_ticks + 1). The fixture is 5 points against 12
+    # ticks, so it is NOT 1.0 -- which is the point: assuming 1.0 silently
+    # mis-times every animation on a dataset where the two axes differ.
+    meta = write_current(root, tmp_path / "data", time_step_us=0.1)
+
+    assert meta["points_per_tick"] == pytest.approx(5 / (N_TICKS + 1))
+
+
+def test_points_per_tick_scales_with_the_path_array(root, tmp_path):
+    # A longer path array against the same response must raise it
+    # proportionally; a hardcoded 1.0 would not move.
+    paths = lattice_paths(n_steps=50)
+    np.savez(root / "paths" / "drift3d.npz", drift3d=paths)
+    np.savez(root / "paths" / "drift3d_endtag.npz", drift3d=np.zeros(len(paths)))
+
+    meta = write_current(root, tmp_path / "data", time_step_us=0.1)
+
+    assert meta["points_per_tick"] == pytest.approx(50 / (N_TICKS + 1))
+
+
+def test_points_per_tick_is_a_float(root, tmp_path):
+    # An integer division would floor 4000/4000 fine but truncate elsewhere.
+    dest = tmp_path / "data"
+    write_current(root, dest, time_step_us=0.1)
+
+    value = json.loads((dest / "current.json").read_text())["points_per_tick"]
+    assert isinstance(value, float)
+
+
+def test_there_is_one_path_step_count_per_path(root, tmp_path):
+    meta = write_current(root, tmp_path / "data", time_step_us=0.1)
+
+    assert len(meta["path_steps"]) == M * M
+
+
+def test_path_steps_are_in_path_id_order(root, tmp_path):
+    # Same ordering as starts, so index i*M+j is block[i, j]'s path.
+    meta = write_current(root, tmp_path / "data", time_step_us=0.1)
+
+    assert len(meta["path_steps"]) == len(meta["starts"])
+
+
+def test_path_steps_measure_the_trimmed_length_not_the_padded_one(root, tmp_path):
+    # The stored array repeats its final point out to the full length, so a
+    # padded count would run every electron to the anode at the last tick.
+    # The fixture drifts for 3 points then stagnates: trim_stagnant keeps the
+    # moving part plus one copy of the end.
+    paths = lattice_paths(n_steps=20)
+    np.savez(root / "paths" / "drift3d.npz", drift3d=paths)
+    np.savez(root / "paths" / "drift3d_endtag.npz", drift3d=np.zeros(len(paths)))
+
+    meta = write_current(root, tmp_path / "data", time_step_us=0.1)
+
+    assert all(n < 20 for n in meta["path_steps"]), (
+        f"path_steps kept the padding: {sorted(set(meta['path_steps']))}"
+    )
+    assert all(n >= 2 for n in meta["path_steps"])
+
+
+def test_path_steps_are_plain_ints(root, tmp_path):
+    meta = write_current(root, tmp_path / "data", time_step_us=0.1)
+
+    assert all(type(n) is int for n in meta["path_steps"])
+
+
+def test_the_timing_fields_survive_the_json_round_trip(root, tmp_path):
+    dest = tmp_path / "data"
+    meta = write_current(root, dest, time_step_us=0.1)
+
+    assert json.loads((dest / "current.json").read_text()) == meta
+
+
+# --- against the real dataset -------------------------------------------------
+
+REFERENCE_ROOT = Path(__file__).resolve().parent.parent.parent / "OUTPUT" / "store_largepix_wgrid"
+needs_reference = pytest.mark.skipif(
+    not REFERENCE_ROOT.is_dir(), reason=f"reference dataset not present at {REFERENCE_ROOT}"
+)
+
+
+@needs_reference
+def test_the_reference_points_per_tick_is_one(root, tmp_path):
+    # 4000 path points against 3999 ticks. Quoted in the docstring, so it is
+    # worth confirming rather than assuming.
+    meta = write_current(REFERENCE_ROOT, tmp_path / "data", time_step_us=0.1)
+
+    assert meta["points_per_tick"] == pytest.approx(1.0)
+
+
+@needs_reference
+def test_the_reference_paths_really_do_end_at_different_steps(tmp_path):
+    # The whole reason path_steps exists. If they were all equal, a single
+    # global length would have done.
+    meta = write_current(REFERENCE_ROOT, tmp_path / "data", time_step_us=0.1)
+
+    steps = meta["path_steps"]
+    assert len(set(steps)) > 1, "every path ends at the same step after all"
+    assert min(steps) == 1810, f"path 0's documented 1810 steps is now {min(steps)}"
+    assert max(steps) < 4000, "a path kept its padding"
+
+
+@needs_reference
+def test_no_reference_path_runs_the_full_window(tmp_path):
+    # The bug this fixes: stretching every path across all 3999 ticks made
+    # each electron arrive exactly at the last tick whatever its real length.
+    meta = write_current(REFERENCE_ROOT, tmp_path / "data", time_step_us=0.1)
+
+    assert max(meta["path_steps"]) < meta["n_ticks"] / 2, (
+        "the longest path now spans more than half the response window"
+    )

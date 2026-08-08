@@ -35,6 +35,12 @@ build_js = (ROOT / "web" / "current_build.js").read_text()
 view_js = (ROOT / "web" / "current_view.js").read_text()
 anim_js = (ROOT / "web" / "drift_anim.js").read_text()
 
+REFERENCE_ROOT = Path(__file__).resolve().parent.parent.parent / "OUTPUT" / "store_largepix_wgrid"
+needs_reference = pytest.mark.skipif(
+    not REFERENCE_ROOT.is_dir(), reason=f"reference dataset not present at {REFERENCE_ROOT}"
+)
+
+
 HEADING = "## The induced-current view"
 
 
@@ -188,12 +194,39 @@ def test_the_slab_shape_matches_the_stride_example():
 
 
 def test_the_documented_tick_formula_matches_tickToIndex():
-    # k/(T-1) * (N-1) -- both endpoints matter: tick 0 at the first point and
-    # the last tick exactly at the last.
-    assert "k/(T-1) * (N-1)" in flat()
-    # tickToIndex lives in drift_anim.js -- current_build.js has the
-    # similarly-shaped tickToX, which maps to pixels, not path index.
-    assert "(k / (nTicks - 1)) * (nPoints - 1)" in anim_js
+    # 66a850a rewrote this for the two-conversion mapping. tickToIndex lives in
+    # drift_anim.js -- current_build.js has the similarly-shaped tickToX, which
+    # maps to pixels, not path index.
+    body = flat()
+
+    assert "`k * points_per_tick`" in body
+    assert "min(raw / (path_steps - 1), 1) * (N - 1)" in body
+    assert "const raw = k * pointsPerTick;" in anim_js
+    assert "Math.min(raw / (steps - 1), 1)" in anim_js
+    assert "fraction * (nPoints - 1)" in anim_js
+
+
+def test_the_old_proportional_stretch_is_not_still_documented():
+    # It was the formula here until 66a850a; leaving it would describe timing
+    # the viewer no longer uses.
+    assert "k/(T-1) * (N-1)" not in flat()
+
+
+def test_the_two_clocks_are_explained_rather_than_assumed():
+    body = flat()
+
+    assert "not on the same clock" in body
+    assert "recorded in `current.json`, never assumed" in body
+
+
+def test_the_parking_behaviour_is_documented_with_its_reason():
+    # The defect b36f0a0 fixed, and the one a reader would otherwise report as
+    # a rendering glitch.
+    body = flat()
+
+    assert "parks when its own electron is collected" in body
+    assert "1810" in body
+    assert "moved in lockstep while their currents spiked at four different times" in body
 
 
 def test_the_decimation_cap_matches_the_cli_default():
@@ -211,14 +244,27 @@ def test_the_point_count_is_documented_as_per_path():
     assert "decimate()" in flat()
 
 
-def test_the_stated_ratio_follows_from_the_two_numbers():
-    # "3999 ticks ... 400 points ... roughly ten ticks per stored point"
-    body = section()
-    ticks = int(re.search(r"\*\*(\d+) ticks\*\*", flat()).group(1))
-    points = int(re.search(r"most (\d+) points\*\*", flat()).group(1))
+def test_the_quoted_arrival_fraction_is_arithmetically_right():
+    # "path 0 ends at 1810 of the 4000 stored points, so it reaches the anode
+    # at about 45% of the tick window."
+    body = flat()
+    steps = int(re.search(r"path 0 ends at (\d+) of the (\d+) stored points", body).group(1))
+    stored = int(re.search(r"path 0 ends at (\d+) of the (\d+) stored points", body).group(2))
 
-    assert round(ticks / points) == 10
-    assert "ten ticks per stored point" in flat()
+    assert round(100 * steps / stored) == 45, (
+        f"{steps} of {stored} is {100 * steps / stored:.0f}%, not the quoted 45%"
+    )
+
+
+@needs_reference
+def test_the_quoted_path_length_matches_the_data():
+    from pochoir_viewer.paths import load_paths, trim_stagnant
+
+    paths, _ = load_paths(REFERENCE_ROOT)
+    shortest = min(len(trim_stagnant(p)) for p in paths)
+
+    assert shortest == 1810, f"the shortest path is {shortest} steps, not the quoted 1810"
+    assert paths.shape[1] == 4000, f"paths are stored at {paths.shape[1]} points, not 4000"
 
 
 # --- the claims about the view's behaviour ------------------------------------
@@ -321,12 +367,6 @@ def test_the_title_really_does_carry_the_peak():
 
 
 # --- the quoted amplitudes, against the real dataset --------------------------
-
-REFERENCE_ROOT = Path(__file__).resolve().parent.parent.parent / "OUTPUT" / "store_largepix_wgrid"
-needs_reference = pytest.mark.skipif(
-    not REFERENCE_ROOT.is_dir(), reason=f"reference dataset not present at {REFERENCE_ROOT}"
-)
-
 
 def reference_peaks():
     from pochoir_viewer.current import load_response

@@ -232,8 +232,18 @@ test("the dots ride the same z-compressed root as the paths", () => {
 
 test("the dots are built with the payload's tick count", () => {
   // driftAnim and currentView must agree on T or the dot and the cursor
-  // describe different instants.
-  assert.match(selectField(), /createDriftAnim\(sceneData\.paths, data\.meta\.shape\[2\]\)/);
+  // describe different instants. aad9bc0 added a third argument.
+  assert.match(selectField(), /createDriftAnim\(sceneData\.paths, data\.meta\.shape\[2\], \{/);
+});
+
+test("a payload predating the timing fields warns, naming the fix", () => {
+  // Silently mis-timing is the failure mode this avoids: the dots would drift
+  // out of step with the current and nothing would say why.
+  const body = functionBody("selectField");
+
+  assert.match(body, /points_per_tick === undefined/);
+  assert.match(body, /will not line up with the current|will not line/);
+  assert.match(body, /re-run: python -m pochoir_viewer export-current/);
 });
 
 test("a second click at the end replays instead of doing nothing", () => {
@@ -601,4 +611,25 @@ test("the wiring runs only when the payload actually arrived", () => {
 
   assert.match(branch, /let data = null/);
   assert.match(branch, /if \(data\) \{/);
+});
+
+// --- the timing metadata reaches the dots (aad9bc0) --------------------------
+
+test("createDriftAnim is given the payload's timing", () => {
+  // Without it the dots fall back to the pre-Phase-M proportional stretch,
+  // which is wrong for every path whose real length is not the full window.
+  const body = functionBody("selectField");
+
+  assert.match(body, /createDriftAnim\(sceneData\.paths, data\.meta\.shape\[2\], \{/);
+  assert.match(body, /points_per_tick/);
+  assert.match(body, /path_steps/);
+});
+
+test("a payload without the timing fields is not treated as an error", () => {
+  // current.json files written before 093dc7b lack them; they still animate,
+  // just on the old timing.
+  const body = functionBody("selectField");
+  const call = body.slice(body.indexOf("createDriftAnim("), body.indexOf("createDriftAnim(") + 400);
+
+  assert.equal(/throw|assert/.test(call), false, "a missing timing field now throws");
 });
