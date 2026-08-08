@@ -223,7 +223,12 @@ export function createCurrentView(data, doc = globalThis.document) {
       selection = [...next].slice(0, SLOT_COUNT);
       draw();
     },
-    /** This panel's time window, for the zoom controls. */
+    /**
+     * This panel's own viewport, for the zoom controls.
+     *
+     * Copied out, so a caller cannot mutate the stored one behind draw()'s
+     * back.
+     */
     viewportOf(slot) {
       return { ...viewports[slot] };
     },
