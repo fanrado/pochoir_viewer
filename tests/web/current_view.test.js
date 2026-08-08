@@ -17,13 +17,20 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 import {
+  DRAG_TICKS_MIN,
   PANELS,
   PATH_COLORS,
   SLOT_COUNT,
+  WHEEL_ZOOM_STEP,
   createCurrentView,
   pathColor,
 } from "../../web/current_view.js";
-import { traceAt } from "../../web/current_build.js";
+import {
+  MIN_VIEWPORT_TICKS,
+  tickToXIn,
+  traceAt,
+  xToTickIn,
+} from "../../web/current_build.js";
 
 const M = 10;
 const T = 4;
@@ -49,13 +56,38 @@ function fakeContext() {
 
 function fakeCanvas(width = 100, height = 60) {
   const ctx = fakeContext();
+  const handlers = {};
+  const captured = [];
   return {
     clientWidth: width,
     clientHeight: height,
     width: 0,
     height: 0,
     ctx,
+    handlers,
+    captured,
     getContext: () => ctx,
+    addEventListener(type, fn, options) {
+      (handlers[type] ??= []).push({ fn, options });
+    },
+    setPointerCapture: (id) => captured.push(["set", id]),
+    releasePointerCapture: (id) => captured.push(["release", id]),
+    /** Dispatch a synthetic event and report what the handler did with it. */
+    fire(type, event = {}) {
+      const seen = { stopped: false, prevented: false };
+      const full = {
+        offsetX: 0,
+        pointerId: 1,
+        ...event,
+        stopPropagation: () => { seen.stopped = true; },
+        preventDefault: () => { seen.prevented = true; },
+      };
+      for (const { fn } of handlers[type] ?? []) fn(full);
+      return seen;
+    },
+    optionsFor(type) {
+      return (handlers[type] ?? []).map((h) => h.options);
+    },
   };
 }
 
@@ -842,4 +874,255 @@ test("an unzoomed panel still reads the whole span", () => {
   createCurrentView(viewportPayload(), doc).setSelection([{ i: 0, j: 0 }]);
 
   assert.ok(texts(doc, SLOTS[0]).includes("0.0–9.9 us"), texts(doc, SLOTS[0]).join(" | "));
+});
+
+// --- zoom interaction (1432580) ------------------------------------------------
+//
+// Two things here are easy to get wrong in ways nobody notices until they are
+// annoying: an event escaping to the 3-D canvas underneath (so dragging out a
+// time range orbits the scene), and a click being treated as a zero-width drag
+// (so the panel jumps to a few arbitrary ticks). Both get direct tests.
+
+const canvasOf = (doc, slot) => doc.els[SLOTS[slot]];
+
+function wired(selection = [{ i: 0, j: 0 }]) {
+  const doc = fakeDoc();
+  const view = createCurrentView(payload({ m: M, t: 100 }), doc);
+  view.setSelection(selection);
+  return { doc, view };
+}
+
+test("every pointer handler stops the event reaching the scene", () => {
+  // #current-panel is pointer-events:none with the canvases opting back in, so
+  // anything not stopped continues to the 3-D canvas and OrbitControls orbits
+  // while the user is dragging a time range.
+  const { doc } = wired();
+  const canvas = canvasOf(doc, 0);
+
+  for (const type of ["pointerdown", "pointerup", "pointercancel", "wheel", "dblclick"]) {
+    assert.equal(canvas.fire(type).stopped, true, `${type} escaped`);
+  }
+});
+
+test("the wheel handler is registered non-passive and prevents default", () => {
+  // A passive listener cannot preventDefault, so the page would scroll while
+  // the panel zoomed.
+  const { doc } = wired();
+  const canvas = canvasOf(doc, 0);
+
+  assert.deepEqual(canvas.optionsFor("wheel"), [{ passive: false }]);
+  assert.equal(canvas.fire("wheel", { deltaY: -1 }).prevented, true);
+});
+
+// --- drag to a range -------------------------------------------------------------
+
+test("a drag zooms to the span it covered", () => {
+  const { doc, view } = wired();
+  const canvas = canvasOf(doc, 0);
+
+  canvas.fire("pointerdown", { offsetX: 20 });
+  canvas.fire("pointerup", { offsetX: 60 });
+
+  // 100px wide over ticks 0..99, so 20px is tick ~19.8 and 60px is ~59.4.
+  const v = view.viewportOf(0);
+  assert.ok(Math.abs(v.tickLo - 19.8) < 0.5, `lo ${v.tickLo}`);
+  assert.ok(Math.abs(v.tickHi - 59.4) < 0.5, `hi ${v.tickHi}`);
+});
+
+test("a backwards drag gives the same window", () => {
+  const forwards = wired();
+  const backwards = wired();
+
+  canvasOf(forwards.doc, 0).fire("pointerdown", { offsetX: 20 });
+  canvasOf(forwards.doc, 0).fire("pointerup", { offsetX: 60 });
+  canvasOf(backwards.doc, 0).fire("pointerdown", { offsetX: 60 });
+  canvasOf(backwards.doc, 0).fire("pointerup", { offsetX: 20 });
+
+  assert.deepEqual(backwards.view.viewportOf(0), forwards.view.viewportOf(0));
+});
+
+test("a click is not a zero-width drag", () => {
+  // Zooming to a click would throw the panel to an arbitrary few ticks around
+  // wherever the pointer happened to be.
+  const { doc, view } = wired();
+  const canvas = canvasOf(doc, 0);
+  const before = view.viewportOf(0);
+
+  canvas.fire("pointerdown", { offsetX: 50 });
+  canvas.fire("pointerup", { offsetX: 50 });
+
+  assert.deepEqual(view.viewportOf(0), before, "a click zoomed the panel");
+});
+
+test("a drag shorter than the threshold is also treated as a click", () => {
+  const { doc, view } = wired();
+  const canvas = canvasOf(doc, 0);
+  const before = view.viewportOf(0);
+
+  // 1px is ~1 tick on this fixture, below DRAG_TICKS_MIN.
+  canvas.fire("pointerdown", { offsetX: 50 });
+  canvas.fire("pointerup", { offsetX: 51 });
+
+  assert.deepEqual(view.viewportOf(0), before);
+  assert.ok(DRAG_TICKS_MIN >= 2, "the threshold no longer excludes a one-tick drag");
+});
+
+test("a pointerup with no pointerdown does nothing", () => {
+  // The pointer can enter the canvas mid-drag from elsewhere.
+  const { doc, view } = wired();
+  const before = view.viewportOf(0);
+
+  canvasOf(doc, 0).fire("pointerup", { offsetX: 90 });
+
+  assert.deepEqual(view.viewportOf(0), before);
+});
+
+test("a cancelled drag does not zoom", () => {
+  const { doc, view } = wired();
+  const canvas = canvasOf(doc, 0);
+  const before = view.viewportOf(0);
+
+  canvas.fire("pointerdown", { offsetX: 10 });
+  canvas.fire("pointercancel", {});
+  canvas.fire("pointerup", { offsetX: 90 });
+
+  assert.deepEqual(view.viewportOf(0), before, "a cancelled drag still zoomed");
+});
+
+test("the drag captures and releases the pointer", () => {
+  // Without capture, a drag leaving the canvas never delivers its pointerup.
+  const { doc } = wired();
+  const canvas = canvasOf(doc, 0);
+
+  canvas.fire("pointerdown", { offsetX: 10, pointerId: 7 });
+  canvas.fire("pointerup", { offsetX: 60, pointerId: 7 });
+
+  assert.deepEqual(canvas.captured, [["set", 7], ["release", 7]]);
+});
+
+test("an empty panel cannot be dragged", () => {
+  const { doc, view } = wired([{ i: 0, j: 0 }]);
+  const empty = canvasOf(doc, 3);
+  const before = view.viewportOf(3);
+
+  empty.fire("pointerdown", { offsetX: 10 });
+  empty.fire("pointerup", { offsetX: 60 });
+
+  assert.deepEqual(view.viewportOf(3), before, "an empty slot zoomed");
+});
+
+// --- the wheel ---------------------------------------------------------------------
+
+test("wheel up zooms in and wheel down zooms out", () => {
+  const { doc, view } = wired();
+  const canvas = canvasOf(doc, 0);
+  const full = view.viewportOf(0);
+
+  canvas.fire("wheel", { deltaY: -1, offsetX: 50 });
+  const zoomedIn = view.viewportOf(0);
+  assert.ok(zoomedIn.tickHi - zoomedIn.tickLo < full.tickHi - full.tickLo, "wheel up did not zoom in");
+
+  canvas.fire("wheel", { deltaY: 1, offsetX: 50 });
+  const back = view.viewportOf(0);
+  assert.ok(back.tickHi - back.tickLo > zoomedIn.tickHi - zoomedIn.tickLo, "wheel down did not zoom out");
+});
+
+test("the wheel anchors on the pointer", () => {
+  // Whatever is under the pointer must stay under it.
+  const { doc, view } = wired();
+  const canvas = canvasOf(doc, 0);
+  const before = view.viewportOf(0);
+  const anchorTick = xToTickIn(25, before, 100);
+
+  canvas.fire("wheel", { deltaY: -1, offsetX: 25 });
+
+  const after = view.viewportOf(0);
+  assert.ok(
+    Math.abs(tickToXIn(anchorTick, after, 100) - 25) < 1e-6,
+    `the anchor slid to ${tickToXIn(anchorTick, after, 100)}`,
+  );
+});
+
+test("the wheel step is the exported constant, both ways", () => {
+  const { doc, view } = wired();
+  const canvas = canvasOf(doc, 0);
+  const before = view.viewportOf(0);
+
+  canvas.fire("wheel", { deltaY: -1, offsetX: 0 });
+  const after = view.viewportOf(0);
+
+  const ratio = (before.tickHi - before.tickLo) / (after.tickHi - after.tickLo);
+  assert.ok(Math.abs(ratio - WHEEL_ZOOM_STEP) < 1e-6, `zoomed by ${ratio}`);
+});
+
+test("an empty panel ignores the wheel", () => {
+  const { doc, view } = wired([{ i: 0, j: 0 }]);
+  const before = view.viewportOf(3);
+
+  canvasOf(doc, 3).fire("wheel", { deltaY: -1, offsetX: 50 });
+
+  assert.deepEqual(view.viewportOf(3), before);
+});
+
+test("repeated wheel-in bottoms out rather than inverting", () => {
+  const { doc, view } = wired();
+  const canvas = canvasOf(doc, 0);
+
+  for (let n = 0; n < 60; n++) canvas.fire("wheel", { deltaY: -1, offsetX: 50 });
+
+  const v = view.viewportOf(0);
+  assert.ok(v.tickLo < v.tickHi, `inverted: ${v.tickLo}..${v.tickHi}`);
+  assert.ok(v.tickHi - v.tickLo >= MIN_VIEWPORT_TICKS - 1e-9);
+});
+
+// --- reset -------------------------------------------------------------------------
+
+test("double-click restores the whole axis", () => {
+  const { doc, view } = wired();
+  const canvas = canvasOf(doc, 0);
+  canvas.fire("pointerdown", { offsetX: 20 });
+  canvas.fire("pointerup", { offsetX: 60 });
+
+  canvas.fire("dblclick", {});
+
+  assert.deepEqual(view.viewportOf(0), { tickLo: 0, tickHi: 99 });
+});
+
+// --- one panel at a time -------------------------------------------------------------
+
+test("interacting with one panel leaves the others where they were", () => {
+  // The rule the whole design rests on, checked through the real handlers
+  // rather than through setViewport.
+  const { doc, view } = wired([{ i: 0, j: 0 }, { i: 1, j: 1 }, { i: 2, j: 2 }, { i: 3, j: 3 }]);
+
+  canvasOf(doc, 1).fire("wheel", { deltaY: -1, offsetX: 50 });
+  canvasOf(doc, 2).fire("pointerdown", { offsetX: 10 });
+  canvasOf(doc, 2).fire("pointerup", { offsetX: 80 });
+
+  assert.deepEqual(view.viewportOf(0), { tickLo: 0, tickHi: 99 }, "slot 0 moved");
+  assert.deepEqual(view.viewportOf(3), { tickLo: 0, tickHi: 99 }, "slot 3 moved");
+  assert.notDeepEqual(view.viewportOf(1), { tickLo: 0, tickHi: 99 });
+  assert.notDeepEqual(view.viewportOf(2), { tickLo: 0, tickHi: 99 });
+});
+
+test("a drag on one panel does not start a drag on another", () => {
+  const { doc, view } = wired([{ i: 0, j: 0 }, { i: 1, j: 1 }]);
+  const before = view.viewportOf(1);
+
+  canvasOf(doc, 0).fire("pointerdown", { offsetX: 10 });
+  canvasOf(doc, 1).fire("pointerup", { offsetX: 80 });
+
+  assert.deepEqual(view.viewportOf(1), before, "the other panel picked up the drag");
+});
+
+test("a zoom redraws only through the shared draw, so every panel stays consistent", () => {
+  const { doc, view } = wired([{ i: 0, j: 0 }, { i: 1, j: 1 }]);
+  reset(doc);
+
+  canvasOf(doc, 0).fire("wheel", { deltaY: -1, offsetX: 50 });
+
+  // Both panels are repainted, but only slot 0's window changed.
+  assert.ok(ops(doc, SLOTS[0]).length > 0);
+  assert.ok(ops(doc, SLOTS[1]).length > 0, "the untouched panel was not repainted");
+  assert.deepEqual(view.viewportOf(1), { tickLo: 0, tickHi: 99 });
 });
