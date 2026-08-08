@@ -646,3 +646,200 @@ test("a panel's trace is its own cell, not a mirrored partner", () => {
     }
   }
 });
+
+// --- per-panel time viewports (af601c4) ---------------------------------------
+//
+// Each slot keeps its own {tickLo, tickHi}. The properties that matter are the
+// ones a shared window would silently break: zooming one panel must leave the
+// other three exactly where they were, and the cursor must never be drawn at a
+// time the electron is not at.
+
+const viewportPayload = () => payload({ m: M, t: 100 });
+
+test("every panel opens on the whole axis", () => {
+  const doc = fakeDoc();
+  const view = createCurrentView(viewportPayload(), doc);
+
+  for (let slot = 0; slot < SLOT_COUNT; slot++) {
+    assert.deepEqual(view.viewportOf(slot), { tickLo: 0, tickHi: 99 }, `slot ${slot}`);
+  }
+});
+
+test("zooming one panel leaves the other three alone", () => {
+  // The reason the windows are per slot rather than shared.
+  const doc = fakeDoc();
+  const view = createCurrentView(viewportPayload(), doc);
+
+  view.setViewport(1, { tickLo: 20, tickHi: 40 });
+
+  assert.deepEqual(view.viewportOf(1), { tickLo: 20, tickHi: 40 });
+  for (const slot of [0, 2, 3]) {
+    assert.deepEqual(view.viewportOf(slot), { tickLo: 0, tickHi: 99 }, `slot ${slot}`);
+  }
+});
+
+test("viewportOf hands back a copy, not the live window", () => {
+  // A caller mutating what it reads would zoom a panel without redrawing it.
+  const doc = fakeDoc();
+  const view = createCurrentView(viewportPayload(), doc);
+
+  const got = view.viewportOf(0);
+  got.tickLo = 50;
+
+  assert.deepEqual(view.viewportOf(0), { tickLo: 0, tickHi: 99 });
+});
+
+test("setViewport runs its argument through the clamp", () => {
+  // The single authority applies here too, or a bad drag would reach the draw.
+  const doc = fakeDoc();
+  const view = createCurrentView(viewportPayload(), doc);
+
+  view.setViewport(0, { tickLo: 60, tickHi: 10 });
+
+  assert.deepEqual(view.viewportOf(0), { tickLo: 10, tickHi: 60 }, "a backwards window survived");
+});
+
+test("setViewport redraws the panel it changed", () => {
+  const doc = fakeDoc();
+  const view = createCurrentView(viewportPayload(), doc);
+  view.setSelection([{ i: 0, j: 0 }]);
+
+  reset(doc);
+  view.setViewport(0, { tickLo: 10, tickHi: 30 });
+
+  assert.ok(ops(doc, SLOTS[0]).length > 0, "the panel was not redrawn");
+});
+
+test("only the ticks inside the window are drawn", () => {
+  const doc = fakeDoc();
+  const view = createCurrentView(viewportPayload(), doc);
+  view.setSelection([{ i: 0, j: 0 }]);
+
+  reset(doc);
+  view.setViewport(0, { tickLo: 10, tickHi: 30 });
+
+  // 21 ticks, 10..30 inclusive.
+  assert.equal(curves(doc, SLOTS[0]).length, 21);
+});
+
+test("the window's ends map to the panel's edges", () => {
+  const doc = fakeDoc();
+  const view = createCurrentView(viewportPayload(), doc);
+  view.setSelection([{ i: 0, j: 0 }]);
+
+  reset(doc);
+  view.setViewport(0, { tickLo: 10, tickHi: 30 });
+
+  const xs = curves(doc, SLOTS[0]).map(([, , , , ], n, all) => all[n][1]);
+  assert.equal(Math.min(...xs), 0);
+  assert.equal(Math.max(...xs), 100, "the last visible tick is not at the right edge");
+});
+
+test("a zoomed panel still autoscales to its whole trace", () => {
+  // TIME only: the amplitude scale is the peak of the full trace, so the
+  // title's peak stays true and two panels remain comparable by that number.
+  const doc = fakeDoc();
+  const view = createCurrentView(viewportPayload(), doc);
+  view.setSelection([{ i: 0, j: 0 }]);
+  const before = titleOf(doc, SLOTS[0]);
+
+  reset(doc);
+  view.setViewport(0, { tickLo: 10, tickHi: 14 });
+
+  assert.equal(titleOf(doc, SLOTS[0]), before, "zooming changed the reported peak");
+});
+
+// --- the cursor through a viewport ---------------------------------------------
+
+test("a cursor outside the window is not drawn at all", () => {
+  // Clamping it to an edge would park the marker at a time the electron is
+  // not at, which is precisely the lie the panels exist to avoid.
+  const doc = fakeDoc();
+  const view = createCurrentView(viewportPayload(), doc);
+  view.setSelection([{ i: 0, j: 0 }]);
+  view.setViewport(0, { tickLo: 40, tickHi: 60 });
+
+  reset(doc);
+  view.setCursor(10);
+
+  assert.deepEqual(cursorOps(doc, SLOTS[0]), [], "the cursor was clamped into view");
+});
+
+test("a cursor inside the window is drawn in the window's own coordinates", () => {
+  const doc = fakeDoc();
+  const view = createCurrentView(viewportPayload(), doc);
+  view.setSelection([{ i: 0, j: 0 }]);
+  view.setViewport(0, { tickLo: 40, tickHi: 60 });
+
+  reset(doc);
+  view.setCursor(50);
+
+  const [moveTo] = cursorOps(doc, SLOTS[0]);
+  assert.ok(moveTo, "no cursor was drawn");
+  assert.equal(moveTo[1], 50, "the cursor is not at the window's midpoint");
+});
+
+test("the cursor appears in the panels whose window holds it and no others", () => {
+  // Two panels zoomed to different spans is exactly when a shared mapping
+  // would put the marker at two different times.
+  const doc = fakeDoc();
+  const view = createCurrentView(viewportPayload(), doc);
+  view.setSelection([{ i: 0, j: 0 }, { i: 1, j: 1 }]);
+  view.setViewport(0, { tickLo: 0, tickHi: 20 });
+  view.setViewport(1, { tickLo: 60, tickHi: 80 });
+
+  reset(doc);
+  view.setCursor(70);
+
+  assert.deepEqual(cursorOps(doc, SLOTS[0]), [], "drawn in a panel that does not show tick 70");
+  assert.ok(cursorOps(doc, SLOTS[1]).length > 0, "missing from the panel that does");
+});
+
+test("a cursor exactly on a window edge is drawn", () => {
+  // Inclusive bounds: the electron at the first visible tick must show.
+  const doc = fakeDoc();
+  const view = createCurrentView(viewportPayload(), doc);
+  view.setSelection([{ i: 0, j: 0 }]);
+  view.setViewport(0, { tickLo: 40, tickHi: 60 });
+
+  for (const edge of [40, 60]) {
+    reset(doc);
+    view.setCursor(edge);
+    assert.ok(cursorOps(doc, SLOTS[0]).length > 0, `tick ${edge} was dropped`);
+  }
+});
+
+// --- the axis label follows the window ------------------------------------------
+
+test("a zoomed panel reads the span it actually shows", () => {
+  const doc = fakeDoc();
+  const view = createCurrentView(viewportPayload(), doc);
+  view.setSelection([{ i: 0, j: 0 }]);
+
+  reset(doc);
+  view.setViewport(0, { tickLo: 10, tickHi: 30 });
+
+  // time_step_us is 0.1 in the fixture.
+  assert.ok(texts(doc, SLOTS[0]).includes("1.0–3.0 us"), texts(doc, SLOTS[0]).join(" | "));
+});
+
+test("both ends of the label carry a decimal", () => {
+  // "so the two numbers line up rather than one carrying a decimal the other
+  // lacks" -- 0 and 9.9 would read as different precisions.
+  const doc = fakeDoc();
+  const view = createCurrentView(viewportPayload(), doc);
+  view.setSelection([{ i: 0, j: 0 }]);
+
+  const label = texts(doc, SLOTS[0]).find((t) => t.endsWith("us"));
+  const [lo, hi] = label.replace(" us", "").split("–");
+  assert.match(lo, /\.\d$/, `low end ${lo}`);
+  assert.match(hi, /\.\d$/, `high end ${hi}`);
+});
+
+test("an unzoomed panel still reads the whole span", () => {
+  const doc = fakeDoc();
+
+  createCurrentView(viewportPayload(), doc).setSelection([{ i: 0, j: 0 }]);
+
+  assert.ok(texts(doc, SLOTS[0]).includes("0.0–9.9 us"), texts(doc, SLOTS[0]).join(" | "));
+});
