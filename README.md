@@ -304,23 +304,39 @@ on that pad's neighbours? Export the payload first — see
 
 ### Reading the four panels
 
-The 2x2 grid mirrors the pixels in space. The **central** pixel and the
-**diagonal** neighbour sit on one diagonal of the grid; the **x-** and
-**y-neighbours** on the other, so the panel layout matches the pad layout.
+The 2x2 grid is four **selection slots**, not one path's neighbours. Panel *n*
+shows the *n*th selected path and nothing else: that path's own `fr[i, j, :]`,
+titled with its `(i, j)`. Select one path and only the top-left panel has
+content — the other three stay completely blank. The second selection fills the
+top-right, the third the bottom-left, the fourth the bottom-right.
 
-All four panels share one vertical scale. That is deliberate: the diagonal
-neighbour peaks roughly fifty times below the central pixel, and autoscaling
-each panel independently would draw both as the same size wiggle, destroying
-the amplitude comparison the view exists for. The time axis is labelled in
-physical units taken from the payload's `time_step_us`, never in raw ticks.
+Each panel **autoscales to its own trace**, because the slots hold unrelated
+paths and one shared scale would flatten whichever is smaller for no reason.
+
+**So curve heights are not comparable between panels.** A trace that fills its
+panel and one that fills its own panel may differ by orders of magnitude. The
+number that makes them comparable is the **peak printed in each title** — read
+that, not the drawn amplitude. A path near the pad it lands on peaks around
+`1.8e-3`, one several cells away around `5e-5`, and both are drawn the same
+height.
+
+The time axis is labelled in physical units taken from the payload's
+`time_step_us`, never in raw ticks.
 
 ### Selecting paths
 
 The 10x10 grid is one toggle per drift path, laid out as the domain seen down
-z. It is **multi-select** — pick `{0,0}`, `{3,2}`, `{9,1}` and `{5,7}` together
-and every panel draws four curves, one per path. A legend keys each colour to
-its `{i, j}`, which is the only way to tell sixteen curves apart. **clear all**
-empties the selection. Hovering a cell names its start position in mm.
+z. It is **multi-select, up to four** — pick `{0,0}`, `{3,2}`, `{9,1}` and
+`{5,7}` and the view draws four curves, one per panel, in selection order —
+each panel showing only its own path.
+
+There are four panels, so **four is the limit**. With all four slots full a
+fifth click is refused outright: the cell does not toggle and nothing changes,
+so you deselect something first. Deselecting frees that slot in place and the
+next selection reuses it, which means a path keeps its panel position for as
+long as it stays selected. A legend keys each colour to its `{i, j}`.
+**clear all** empties every slot. Hovering a cell names its start position in
+mm.
 
 Changing the selection resets the animation to tick 0, so a newly selected
 electron never appears mid-drift at a tick it was not animated through.
@@ -348,7 +364,13 @@ sliver of its height — so every plotted waveform would belong to a different
 source position than the one selected. Reshape to `(N, N, T)` first, then slice
 `[:M, :M]`.
 
-### Why one path gives four traces
+### Why one path relates to four traces
+
+> **Not what the panels show.** The four panels are selection slots, one per
+> selected path. The reciprocity relationship below is still true of the data
+> and is still implemented in `pixel_traces` and `tracesForPath`, but nothing in
+> the viewer draws it any more — the view was deliberately changed so that no
+> neighbour is ever inferred from a single selection.
 
 A response row is indexed by the electron's **starting** position, not by the
 pixel the current lands on. By reciprocity the quarter of the domain a start
@@ -356,7 +378,7 @@ falls in identifies which pixel picks up the current, so the four pixels a
 single path induces on are four different rows of the same block. The 10-wide
 domain splits 5 + 5, so for a start in the central quarter the traces are:
 
-| panel | row |
+| pad | row |
 | --- | --- |
 | central | `block[i, j]` |
 | x-neighbour | `block[i+5, j]` |
