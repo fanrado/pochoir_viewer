@@ -392,11 +392,27 @@ is the first thing to question — not the offsets to quietly adjust.
 ### Ticks against decimated paths
 
 The response has **3999 ticks** but `scene.json` ships paths **decimated to at
-most 400 points** (`--max-points`), roughly ten ticks per stored point. The
-viewer maps tick `k` to the fractional index `k/(T-1) * (N-1)` along the path
-and interpolates between the two bracketing samples, so the dot glides instead
-of jumping every ten ticks. The paths are never resampled, and the point count
-is read per path — `decimate()` returns fewer points for short ones.
+most 400 points** (`--max-points`), and the two are not on the same clock.
+Placing a dot takes two conversions:
+
+1. tick to **raw step index**, `k * points_per_tick`. The path array is padded
+   to a fixed length while the response is binned, so this ratio is 1.0 for the
+   reference dataset and 50 where 200000 path points are binned into 4000. It
+   is recorded in `current.json`, never assumed.
+2. raw step to **decimated index**, scaled by that path's *own* real length:
+   `min(raw / (path_steps - 1), 1) * (N - 1)`.
+
+The viewer then interpolates between the two bracketing samples, so the dot
+glides rather than jumping. Paths are never resampled and the point count is
+read per path — `decimate()` returns fewer points for short ones.
+
+**Each dot parks when its own electron is collected.** `path_steps` is the real
+length of each path, which differs: path 0 ends at 1810 of the 4000 stored
+points, so it reaches the anode at about 45% of the tick window and then stays
+put while the scan runs on. An earlier version stretched every path across all
+3999 ticks, so every electron arrived exactly at the final tick — the dots moved
+in lockstep while their currents spiked at four different times, which is the
+mismatch that made the animation untrustworthy.
 
 ## The weighting field
 
