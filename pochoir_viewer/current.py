@@ -154,6 +154,11 @@ def write_current(
     ``i * M + j`` is the start for ``block[i, j]`` — which assumes the paths
     array is itself flattened in that order, the same assumption the ``(N, N)``
     reshape in :func:`domain_block` rests on.
+
+    ``points_per_tick`` and ``path_steps`` let the browser relate a path point
+    index to a response tick, which it otherwise cannot do: the path array is
+    padded to a fixed length while the response is binned, and each path really
+    ends at a different step. Both are measured, never assumed.
     """
     dest_dir = Path(dest_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -168,9 +173,23 @@ def write_current(
     binary.write_bytes(block.tobytes())
 
     m, _, n_ticks = block.shape
-    starts = [
-        [float(v) for v in trim_stagnant(raw)[0]] for raw in paths[: m * m]
-    ]
+    trimmed = [trim_stagnant(raw) for raw in paths[: m * m]]
+    starts = [[float(v) for v in path[0]] for path in trimmed]
+
+    # How many stored path points advance per response tick. The path array is
+    # padded to a fixed length and the response is binned, so the two axes are
+    # NOT the same clock: 4000 points against 4000 bins is 1.0 here, but a
+    # dataset with 200000 points against 4000 bins gives 50. Computed from the
+    # arrays every time -- assuming 1.0 silently mis-times every animation on
+    # the larger datasets.
+    raw_path_length = paths.shape[1]
+    points_per_tick = raw_path_length / (n_ticks + 1)
+
+    # Per-path REAL length, in path-id order. The stored array repeats its final
+    # point out to raw_path_length, so a single global length would run every
+    # electron to the anode at the last tick; path 0 actually ends at 1810.
+    # Without this the viewer cannot know when a given electron is collected.
+    path_steps = [int(len(path)) for path in trimmed]
 
     meta = {
         "bin": binary.name,
@@ -180,6 +199,8 @@ def write_current(
         "time_units": "us",
         "bytes": binary.stat().st_size,
         "starts": starts,
+        "points_per_tick": float(points_per_tick),
+        "path_steps": path_steps,
     }
     (dest_dir / f"{stem}.json").write_text(json.dumps(meta))
     return meta
