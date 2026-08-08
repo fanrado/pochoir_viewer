@@ -9,6 +9,10 @@
 import {
   clampViewport,
   fullViewport,
+  resetViewport,
+  xToTickIn,
+  zoomBy,
+  zoomTo,
   peakMagnitude,
   tickToUs,
   tickToXIn,
@@ -37,6 +41,17 @@ export const PANELS = [
 
 /** Slots available; the selection is rendered up to this many. */
 export const SLOT_COUNT = PANELS.length;
+
+/**
+ * Ticks a horizontal drag must cover before it counts as a range selection.
+ *
+ * Below this it is a click, and zooming to a zero-width range would throw the
+ * panel to an arbitrary few ticks around the pointer.
+ */
+export const DRAG_TICKS_MIN = 2;
+
+/** Wheel zoom per notch; the reciprocal zooms in. */
+export const WHEEL_ZOOM_STEP = 1.25;
 
 /**
  * Curve colours, cycled by selection order.
@@ -211,6 +226,75 @@ export function createCurrentView(data, doc = globalThis.document) {
     for (const panel of canvases) drawPanel(panel);
     drawLegend();
   }
+
+  /**
+   * Pointer interaction, one panel at a time.
+   *
+   * Every handler acts on ITS OWN viewport only, so zooming one panel leaves
+   * the other three alone -- the same rule the viewports array encodes.
+   *
+   * All of them stopPropagation. #current-panel is pointer-events:none while
+   * the canvases opt back in, so an event here would otherwise continue to the
+   * 3-D canvas underneath and OrbitControls would orbit the scene while the
+   * user is dragging out a time range. A drag that STARTS outside the panel
+   * never reaches these handlers, so orbit is untouched.
+   */
+  function wirePanel({ canvas, slot }) {
+    if (!canvas?.addEventListener) return;
+
+    const nTicks = data.meta.shape[2];
+    const widthOf = () => canvas.clientWidth || canvas.width || 1;
+    const tickAt = (event) =>
+      xToTickIn(event.offsetX ?? 0, viewports[slot], widthOf());
+
+    let dragFrom = null;
+
+    canvas.addEventListener("pointerdown", (event) => {
+      event.stopPropagation();
+      // Only a filled panel has an axis to zoom.
+      if (!selection[slot]) return;
+      dragFrom = tickAt(event);
+      canvas.setPointerCapture?.(event.pointerId);
+    });
+
+    canvas.addEventListener("pointerup", (event) => {
+      event.stopPropagation();
+      if (dragFrom === null) return;
+      const to = tickAt(event);
+      canvas.releasePointerCapture?.(event.pointerId);
+
+      // A click, not a drag: zooming to a zero-width range would jump the panel
+      // to an arbitrary few ticks around wherever the user happened to click.
+      if (Math.abs(to - dragFrom) >= DRAG_TICKS_MIN) {
+        viewports[slot] = zoomTo(dragFrom, to, nTicks);
+        draw();
+      }
+      dragFrom = null;
+    });
+
+    canvas.addEventListener("pointercancel", (event) => {
+      event.stopPropagation();
+      dragFrom = null;
+    });
+
+    canvas.addEventListener("wheel", (event) => {
+      event.stopPropagation();
+      event.preventDefault?.();
+      if (!selection[slot]) return;
+      // Anchored on the pointer so whatever is under it stays under it.
+      const factor = event.deltaY < 0 ? 1 / WHEEL_ZOOM_STEP : WHEEL_ZOOM_STEP;
+      viewports[slot] = zoomBy(viewports[slot], factor, tickAt(event), nTicks);
+      draw();
+    }, { passive: false });
+
+    canvas.addEventListener("dblclick", (event) => {
+      event.stopPropagation();
+      viewports[slot] = resetViewport(nTicks);
+      draw();
+    });
+  }
+
+  for (const panel of canvases) wirePanel(panel);
 
   return {
     /**
