@@ -198,14 +198,14 @@ test("the cells carry no ids, so none of them can collide", () => {
 
 // --- can every offered cell actually be selected? (6ed3d79) ------------------
 //
-// The selector offers all 100 paths. tracesForPath refuses any start outside
-// the central quarter [0, PIXEL_OFFSET) -- by reciprocity the +5 offsets name
-// a different pair of pixels there, so the four panels have nothing correct to
-// draw. viewer.js routes a click straight into currentView.setSelection, with
-// no filter and no try, so a cell outside the quarter throws out of the click
-// handler.
+// The selector offers all 100 paths and each is a button a user can click, so
+// each must resolve to a real trace. This was originally written against
+// tracesForPath, which refused starts outside the central quarter and so made
+// 75 of the 100 cells throw (pochoir_viewer-u9ht). Phase J replaced that: a
+// panel now reads its own cell with traceAt, so the property to protect is
+// that every offered cell indexes a row inside the block.
 
-import { PIXEL_OFFSET, tracesForPath } from "../../web/current_build.js";
+import { traceAt } from "../../web/current_build.js";
 
 /** A payload the size the selector assumes. */
 function payload(m = M, t = 4) {
@@ -215,33 +215,37 @@ function payload(m = M, t = 4) {
   };
 }
 
-test("every cell the selector offers can be turned into traces", () => {
-  // Each cell is a button a user can click; one that throws is a broken
+test("every cell the selector offers can be turned into a trace", () => {
+  // Each cell is a button a user can click; one that yields nothing is a broken
   // control, not an edge case.
+  const data = payload();
+  const nTicks = data.meta.shape[2];
   const broken = [];
+
   for (const cell of cells) {
+    let trace;
     try {
-      tracesForPath(payload(), cell.i, cell.j);
+      trace = traceAt(data, cell.i, cell.j);
     } catch (error) {
-      broken.push(`(${cell.i}, ${cell.j})`);
+      broken.push(`(${cell.i}, ${cell.j}) threw`);
+      continue;
     }
+    // A subarray past the end of the buffer is silently short rather than an
+    // error, so length is what actually proves the cell is inside the block.
+    if (trace.length !== nTicks) broken.push(`(${cell.i}, ${cell.j}) short`);
   }
 
   assert.deepEqual(
     broken,
     [],
-    `${broken.length} of ${cells.length} cells throw when clicked; `
-      + `tracesForPath only accepts starts in [0, ${PIXEL_OFFSET}). `
+    `${broken.length} of ${cells.length} cells do not resolve to a full trace. `
       + `First few: ${broken.slice(0, 5).join(" ")}`,
   );
 });
 
 test("the offered range matches the range the traces support", () => {
-  // Was red while tracesForPath only accepted the central quarter
-  // (pochoir_viewer-u9ht). 94799a9 opened every quarter, so the supported
-  // range is the block width. Still stated as a comparison rather than a
-  // literal, so whichever side moves next the two are checked against each
-  // other.
+  // Stated as a comparison rather than a literal, so whichever side moves next
+  // the two are checked against each other.
   const offered = Math.max(...cells.flatMap((c) => [c.i, c.j])) + 1;
   const supported = payload().meta.shape[0];
 
@@ -250,5 +254,4 @@ test("the offered range matches the range the traces support", () => {
     supported,
     `the grid offers ${offered} positions per axis against a ${supported}-wide block`,
   );
-  assert.ok(offered > PIXEL_OFFSET, "the grid no longer reaches past the first quarter");
 });

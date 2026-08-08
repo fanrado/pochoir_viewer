@@ -136,10 +136,16 @@ def test_the_documented_offsets_are_the_shipped_offset():
     assert table["diagonal"] == f"i+{PIXEL_OFFSET}, j+{PIXEL_OFFSET}"
 
 
-def test_both_implementations_agree_with_the_documented_offset():
-    # Python and JS index the same buffer; the doc describes one rule.
+def test_the_documented_offset_matches_the_implementation_that_has_it():
+    # The +5 table describes pixel_traces, which is Python-side and still
+    # there. 75cf870 removed the partner machinery from the BROWSER helper --
+    # the view stopped using it at 7c529b6 when panels became selection slots
+    # -- so requiring the constant there would now fail on working code.
     assert f"PIXEL_OFFSET = {PIXEL_OFFSET}" in current_py
-    assert f"PIXEL_OFFSET = {PIXEL_OFFSET};" in build_js
+    assert "PIXEL_OFFSET" not in build_js, (
+        "the browser helper carries the offset again; if the partner machinery "
+        "is back, this test should check both implementations agree"
+    )
 
 
 def test_the_split_is_stated_as_the_offset_doubled():
